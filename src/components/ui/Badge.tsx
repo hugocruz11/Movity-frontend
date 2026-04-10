@@ -14,9 +14,9 @@ interface BadgeProps {
 
 const variantStyles: Record<BadgeVariant, string> = {
   default: "bg-sand-light text-charcoal border-sand",
-  success: "bg-green-50 text-success-text border-green-200",
-  warning: "bg-amber-50 text-warning border-amber-200",
-  error: "bg-red-50 text-error border-red-200",
+  success: "bg-success/10 text-success-text border-success/20",
+  warning: "bg-warning/10 text-warning border-warning/20",
+  error: "bg-error/10 text-error border-error/20",
   muted: "bg-sand-light text-muted border-sand",
   orange: "bg-orange/10 text-orange border-orange/20",
 };

@@ -141,13 +141,13 @@ export default function CampaignDetailPage() {
       </div>
 
       {error && (
-        <div className="mt-4 rounded-md border border-error/20 bg-red-50 p-3">
+        <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-3">
           <p className="text-sm text-error">{error}</p>
         </div>
       )}
 
       {campaign.status === "ERROR" && campaign.errorMessage && (
-        <div className="mt-4 rounded-md border border-error/20 bg-red-50 p-4">
+        <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-4">
           <h3 className="text-sm font-semibold text-error">
             Error en: {campaign.errorStep}
           </h3>

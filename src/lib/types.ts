@@ -68,15 +68,28 @@ export interface MetaInterest {
 export interface CachedAd {
   id: string;
   foreplayId: string;
+  brandId: string;
+  brandName: string | null;
+  displayFormat: string | null;
+  publisherPlatform: string[];
   headline: string | null;
   description: string | null;
+  ctaTitle: string | null;
+  ctaType: string | null;
+  linkUrl: string | null;
+  fullTranscription: string | null;
   imageUrl: string | null;
-  primaryText: string | null;
-  link: string | null;
-  displayUrl: string | null;
-  advertiserName: string | null;
-  brandId: string | null;
-  publisherPlatform: string;
+  thumbnailUrl: string | null;
+  niches: string[];
+  categories: string[];
+  productCategory: string | null;
+  marketTarget: string | null;
+  languages: string[];
+  persona: Record<string, unknown> | null;
+  emotionalDrivers: Record<string, unknown> | null;
+  isLive: boolean;
+  startedRunningAt: string | null;
+  runningDurationDays: number | null;
   createdAt: string;
 }
 

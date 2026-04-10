@@ -8,9 +8,33 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { AdCard } from "@/components/AdCard";
 import { api, ApiError } from "@/lib/api";
-import type { CachedAd, AdsSearchResponse } from "@/lib/types";
+import { scoreAds } from "@/lib/ad-scoring";
+import type { CachedAd, AdsSearchResponse, Brand } from "@/lib/types";
 
 const STORAGE_KEY = "ads_search_state";
+const HISTORY_KEY = "ads_search_history";
+const MAX_HISTORY = 10;
+
+function getHistory(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function addToHistory(q: string) {
+  const trimmed = q.trim();
+  if (!trimmed) return;
+  const history = getHistory().filter((h) => h !== trimmed);
+  history.unshift(trimmed);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+}
+
+function removeFromHistory(q: string) {
+  const history = getHistory().filter((h) => h !== q);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+}
 
 interface SearchState {
   query: string;
@@ -44,6 +68,25 @@ export default function AdsSearchPage() {
   const [ads, setAds] = useState<CachedAd[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [brand, setBrand] = useState<Brand | null>(null);
+  const [topAdId, setTopAdId] = useState<string | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load brand and history on mount
+  useEffect(() => {
+    api.get<Brand>("/brand").then(setBrand).catch(() => {});
+    setHistory(getHistory());
+  }, []);
+
+  // Recalculate top ad when ads or brand change
+  useEffect(() => {
+    if (ads.length > 0) {
+      const scored = scoreAds(ads, brand);
+      const top = scored.find((s) => s.isTop);
+      setTopAdId(top ? top.ad.id : null);
+    }
+  }, [ads, brand]);
 
   // Restore previous search on mount
   useEffect(() => {
@@ -67,6 +110,10 @@ export default function AdsSearchPage() {
     setAds([]);
     setNextCursor(null);
     setSearched(true);
+    setShowHistory(false);
+
+    addToHistory(query.trim());
+    setHistory(getHistory());
 
     try {
       const res = await api.post<AdsSearchResponse>("/ads/search", {
@@ -129,13 +176,48 @@ export default function AdsSearchPage() {
       <Card className="mt-6">
         <form onSubmit={handleSearch} className="flex flex-col gap-4">
           <div className="flex gap-4">
-            <div className="flex-1">
+            <div className="relative flex-1">
               <Input
                 placeholder="Ej: suplementos naturales, ropa deportiva, café artesanal..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => history.length > 0 && setShowHistory(true)}
+                onBlur={() => setTimeout(() => setShowHistory(false), 150)}
                 required
               />
+              {showHistory && history.length > 0 && (
+                <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-sand bg-cream shadow-sm">
+                  {history
+                    .filter((h) => !query.trim() || h.toLowerCase().includes(query.toLowerCase()))
+                    .map((h) => (
+                    <li key={h} className="flex items-center">
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setQuery(h);
+                          setShowHistory(false);
+                        }}
+                        className="flex flex-1 items-center gap-2 px-3 py-2 text-left text-sm text-ink hover:bg-sand-light"
+                      >
+                        <span className="text-muted">🕐</span>
+                        {h}
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          removeFromHistory(h);
+                          setHistory(getHistory());
+                        }}
+                        className="px-3 py-2 text-xs text-muted hover:text-error"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <Button type="submit" loading={loading}>
               Buscar
@@ -173,7 +255,7 @@ export default function AdsSearchPage() {
       </Card>
 
       {error && (
-        <div className="mt-4 rounded-md border border-error/20 bg-red-50 p-3">
+        <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-3">
           <p className="text-sm text-error">{error}</p>
         </div>
       )}
@@ -188,7 +270,7 @@ export default function AdsSearchPage() {
         <div className="mt-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {ads.map((ad) => (
-              <AdCard key={ad.id} ad={ad} />
+              <AdCard key={ad.id} ad={ad} isTop={ad.id === topAdId} />
             ))}
           </div>
 

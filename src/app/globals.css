@@ -1,37 +1,59 @@
 @import "tailwindcss";
 
+/* ── Light palette (default) ── */
 :root {
-  --background: #fffefb;
-  --foreground: #201515;
+  --mv-cream: #fffefb;
+  --mv-cream-alt: #fffdf9;
+  --mv-ink: #201515;
+  --mv-charcoal: #36342e;
+  --mv-muted: #939084;
+  --mv-sand: #c5c0b1;
+  --mv-sand-light: #eceae3;
+  --mv-sand-mid: #b5b2aa;
+  --mv-orange: #ff4f00;
+  --mv-orange-hover: #e64700;
+  --mv-success: #15be53;
+  --mv-success-text: #108c3d;
+  --mv-error: #c13515;
+  --mv-warning: #9b6829;
+}
+
+/* ── Dark palette ── */
+.dark {
+  --mv-cream: #111111;
+  --mv-cream-alt: #161616;
+  --mv-ink: #e8e6e1;
+  --mv-charcoal: #b5b2aa;
+  --mv-muted: #787571;
+  --mv-sand: #2a2928;
+  --mv-sand-light: #1c1c1a;
+  --mv-sand-mid: #3a3938;
+  --mv-orange: #ff6a2a;
+  --mv-orange-hover: #ff7e47;
+  --mv-success: #22d966;
+  --mv-success-text: #22d966;
+  --mv-error: #f04a2a;
+  --mv-warning: #d4952e;
 }
 
 @theme inline {
-  /* Canvas & text */
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-cream: var(--mv-cream);
+  --color-cream-alt: var(--mv-cream-alt);
+  --color-ink: var(--mv-ink);
+  --color-charcoal: var(--mv-charcoal);
+  --color-muted: var(--mv-muted);
+  --color-sand: var(--mv-sand);
+  --color-sand-light: var(--mv-sand-light);
+  --color-sand-mid: var(--mv-sand-mid);
+  --color-orange: var(--mv-orange);
+  --color-orange-hover: var(--mv-orange-hover);
+  --color-success: var(--mv-success);
+  --color-success-text: var(--mv-success-text);
+  --color-error: var(--mv-error);
+  --color-warning: var(--mv-warning);
 
-  /* Brand palette */
-  --color-cream: #fffefb;
-  --color-cream-alt: #fffdf9;
-  --color-ink: #201515;
-  --color-charcoal: #36342e;
-  --color-muted: #939084;
-  --color-sand: #c5c0b1;
-  --color-sand-light: #eceae3;
-  --color-sand-mid: #b5b2aa;
-  --color-orange: #ff4f00;
-  --color-orange-hover: #e64700;
-
-  /* Semantic */
-  --color-success: #15be53;
-  --color-success-text: #108c3d;
-  --color-error: #c13515;
-  --color-warning: #9b6829;
-
-  /* Typography */
   --font-sans: var(--font-inter);
 
-  /* Border radius */
   --radius-sm: 4px;
   --radius-md: 5px;
   --radius-lg: 8px;
@@ -39,13 +61,13 @@
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--mv-cream);
+  color: var(--mv-ink);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 /* Focus ring — orange */
 *:focus-visible {
-  outline: 2px solid var(--color-orange);
+  outline: 2px solid var(--mv-orange);
   outline-offset: 2px;
 }

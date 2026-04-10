@@ -101,7 +101,7 @@ export default function CampaignsPage() {
       </div>
 
       {error && (
-        <div className="mt-4 rounded-md border border-error/20 bg-red-50 p-3">
+        <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-3">
           <p className="text-sm text-error">{error}</p>
         </div>
       )}

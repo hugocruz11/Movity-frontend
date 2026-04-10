@@ -132,13 +132,13 @@ export default function OnboardingPage() {
         </div>
 
         {error && (
-          <div className="rounded-md border border-error/20 bg-red-50 p-3">
+          <div className="rounded-md border border-error/20 bg-error/10 p-3">
             <p className="text-sm text-error">{error}</p>
           </div>
         )}
 
         {warnings.length > 0 && (
-          <div className="rounded-md border border-warning/20 bg-amber-50 p-3">
+          <div className="rounded-md border border-warning/20 bg-warning/10 p-3">
             <p className="text-sm font-medium text-warning">Avisos:</p>
             {warnings.map((w, i) => (
               <p key={i} className="mt-1 text-sm text-warning">{w}</p>
