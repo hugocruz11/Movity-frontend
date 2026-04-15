@@ -11,6 +11,8 @@ import { CampaignStatusBadge } from "@/components/CampaignStatusBadge";
 import { api, ApiError } from "@/lib/api";
 import type { Campaign } from "@/lib/types";
 
+const API_HOST = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
 interface AdPreview {
   format: string;
   html: string;
@@ -208,6 +210,51 @@ export default function CampaignDetailPage() {
               ))}
             </div>
           )}
+        </Card>
+      )}
+
+      {/* Ad Images — primary + variants */}
+      {campaign.generatedImage && (
+        <Card className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Creativos del anuncio
+          </h3>
+          <p className="mt-1 text-xs text-muted">
+            Imagen principal
+            {campaign.additionalImages && campaign.additionalImages.length > 0
+              ? ` + ${campaign.additionalImages.length} variante${campaign.additionalImages.length > 1 ? "s" : ""} para A/B testing`
+              : ""}
+          </p>
+
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {/* Primary image */}
+            <div className="relative overflow-hidden rounded-lg border-2 border-orange">
+              <img
+                src={`${API_HOST}${campaign.generatedImage.feedImageUrl || campaign.generatedImage.verticalImageUrl || campaign.generatedImage.storyImageUrl}`}
+                alt="Imagen principal"
+                className="w-full"
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
+                <span className="text-xs font-medium text-white">Principal</span>
+              </div>
+            </div>
+
+            {/* Variant images */}
+            {campaign.additionalImages?.map((img, i) => (
+              <div key={img.id} className="relative overflow-hidden rounded-lg border border-sand">
+                <img
+                  src={`${API_HOST}${img.feedImageUrl || img.verticalImageUrl || img.storyImageUrl}`}
+                  alt={`Variante ${i + 2}`}
+                  className="w-full"
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
+                  <span className="text-xs font-medium text-white">
+                    Variante {i + 2}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 

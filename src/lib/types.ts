@@ -107,6 +107,15 @@ export interface AdsUsage {
   creditsTotal: number;
 }
 
+// ── Reference Images ──
+
+export interface ReferenceImage {
+  id: string;
+  name: string | null;
+  imageUrl: string;
+  createdAt: string;
+}
+
 // ── Copy Adaptation ──
 
 export interface CopyVariant {
@@ -126,6 +135,7 @@ export interface Product {
 export interface AdaptCopyResponse {
   adaptationId: string;
   product: Product | null;
+  referenceImageUrl?: string | null;
   variants: CopyVariant[];
   cached: boolean;
 }
@@ -138,6 +148,16 @@ export interface GenerateImageResponse {
   feedImageUrl: string | null;
   verticalImageUrl: string | null;
   storyImageUrl: string | null;
+}
+
+export interface EditImageResponse {
+  imageUrl: string;
+  format: string;
+}
+
+export interface ImageVariantsResponse {
+  variants: { id: string; imageUrl: string }[];
+  format: string;
 }
 
 // ── Campaigns ──
@@ -178,11 +198,25 @@ export interface Campaign {
   metaCreativeId: string | null;
   metaAdId: string | null;
   metaImageHash: string | null;
+  additionalImageIds: string[];
   errorStep: string | null;
   errorMessage: string | null;
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // Populated in detail view
+  generatedImage?: {
+    id: string;
+    feedImageUrl: string;
+    verticalImageUrl: string;
+    storyImageUrl: string;
+  } | null;
+  additionalImages?: {
+    id: string;
+    feedImageUrl: string;
+    verticalImageUrl: string;
+    storyImageUrl: string;
+  }[];
 }
 
 export interface CampaignDefaults {

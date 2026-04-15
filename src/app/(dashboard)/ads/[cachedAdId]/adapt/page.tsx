@@ -8,10 +8,13 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { FileUpload } from "@/components/ui/FileUpload";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { Spinner } from "@/components/ui/Spinner";
 import { CopyVariantPicker } from "@/components/CopyVariantPicker";
 import { api, ApiError } from "@/lib/api";
 import type { CachedAd, AdaptCopyResponse, Product } from "@/lib/types";
+
+const API_HOST = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
 export default function AdaptCopyPage() {
   const { cachedAdId } = useParams<{ cachedAdId: string }>();
@@ -24,6 +27,7 @@ export default function AdaptCopyPage() {
   const [productImage, setProductImage] = useState<File | null>(null);
   const [existingProductId, setExistingProductId] = useState("");
   const [savedProducts, setSavedProducts] = useState<Product[]>([]);
+  const [userInstructions, setUserInstructions] = useState("");
 
   // Result state
   const [result, setResult] = useState<AdaptCopyResponse | null>(null);
@@ -60,6 +64,10 @@ export default function AdaptCopyPage() {
         if (productName.trim()) {
           formData.append("productName", productName.trim());
         }
+      }
+
+      if (userInstructions.trim()) {
+        formData.append("userInstructions", userInstructions.trim());
       }
 
       const res = await api.post<AdaptCopyResponse>(
@@ -119,72 +127,142 @@ export default function AdaptCopyPage() {
         Adapta el copy de &quot;{ad.headline || "este anuncio"}&quot; a tu marca.
       </p>
 
+      {/* Original copy preview */}
+      <Card className="mt-6">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+          Copy original del anuncio
+        </h3>
+        <div className="mt-3 flex flex-col gap-3 rounded-md border border-sand bg-sand-light p-4">
+          {ad.headline && (
+            <div>
+              <span className="text-xs font-medium uppercase text-muted">Headline</span>
+              <p className="mt-0.5 text-sm font-medium text-ink">{ad.headline}</p>
+            </div>
+          )}
+          {ad.description && (
+            <div>
+              <span className="text-xs font-medium uppercase text-muted">Descripción</span>
+              <p className="mt-0.5 text-sm text-charcoal whitespace-pre-line">{ad.description}</p>
+            </div>
+          )}
+          {ad.ctaTitle && (
+            <div>
+              <span className="text-xs font-medium uppercase text-muted">CTA</span>
+              <p className="mt-0.5 text-sm text-charcoal">{ad.ctaTitle}</p>
+            </div>
+          )}
+        </div>
+      </Card>
+
       {!result && (
-        <Card className="mt-6">
-          <form onSubmit={handleAdapt} className="flex flex-col gap-5">
+        <>
+          {/* User instructions */}
+          <Card className="mt-4">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Producto (opcional)
+              ¿Qué quieres adaptar?
             </h3>
+            <p className="mt-1 text-xs text-muted">
+              Describe en tus palabras qué cambios quieres en el copy. La IA usará
+              estas instrucciones junto con la información de tu marca.
+            </p>
+            <Textarea
+              className="mt-3"
+              rows={4}
+              placeholder="Ej: Quiero que el tono sea más juvenil y directo, enfocado en el beneficio de ahorro de tiempo. Menciona que tenemos envío gratis en Colombia."
+              value={userInstructions}
+              onChange={(e) => setUserInstructions(e.target.value)}
+            />
+          </Card>
 
-            {savedProducts.length > 0 && (
-              <div className="flex gap-4">
-                <button
-                  type="button"
-                  onClick={() => setMode("new")}
-                  className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-                    mode === "new"
-                      ? "border-orange text-orange"
-                      : "border-sand text-muted hover:border-orange/30"
-                  }`}
-                >
-                  Nuevo producto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode("existing")}
-                  className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-                    mode === "existing"
-                      ? "border-orange text-orange"
-                      : "border-sand text-muted hover:border-orange/30"
-                  }`}
-                >
-                  Producto existente
-                </button>
-              </div>
-            )}
+          {/* Product section */}
+          <Card className="mt-4">
+            <form onSubmit={handleAdapt} className="flex flex-col gap-5">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+                Producto (opcional)
+              </h3>
 
-            {mode === "new" ? (
-              <div className="flex flex-col gap-4">
-                <Input
-                  label="Nombre del producto"
-                  placeholder="Ej: Kit Detox 360"
-                  value={productName}
-                  onChange={(e) => setProductName(e.target.value)}
-                />
-                <FileUpload
-                  label="Foto del producto"
-                  onChange={setProductImage}
-                  helperText="La IA usará esta imagen para generar el creativo."
-                />
-              </div>
-            ) : (
-              <Select
-                label="Seleccionar producto"
-                value={existingProductId}
-                onChange={(e) => setExistingProductId(e.target.value)}
-                placeholder="Elige un producto guardado"
-                options={savedProducts.map((p) => ({
-                  value: p.id,
-                  label: p.name || "Sin nombre",
-                }))}
-              />
-            )}
+              {savedProducts.length > 0 && (
+                <div className="flex gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setMode("new")}
+                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                      mode === "new"
+                        ? "border-orange text-orange"
+                        : "border-sand text-muted hover:border-orange/30"
+                    }`}
+                  >
+                    Nuevo producto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("existing")}
+                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                      mode === "existing"
+                        ? "border-orange text-orange"
+                        : "border-sand text-muted hover:border-orange/30"
+                    }`}
+                  >
+                    Producto existente
+                  </button>
+                </div>
+              )}
 
-            <Button type="submit" loading={loading} size="lg" className="w-full">
-              Generar variantes de copy
-            </Button>
-          </form>
-        </Card>
+              {mode === "new" ? (
+                <div className="flex flex-col gap-4">
+                  <Input
+                    label="Nombre del producto"
+                    placeholder="Ej: Kit Detox 360"
+                    value={productName}
+                    onChange={(e) => setProductName(e.target.value)}
+                  />
+                  <FileUpload
+                    label="Foto del producto"
+                    onChange={setProductImage}
+                    helperText="La IA usará esta imagen para generar el creativo."
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                  {savedProducts.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setExistingProductId(p.id)}
+                      className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
+                        existingProductId === p.id
+                          ? "border-orange ring-2 ring-orange/30"
+                          : "border-sand hover:border-orange/30"
+                      }`}
+                    >
+                      <img
+                        src={`${API_HOST}${p.imageUrl}`}
+                        alt={p.name || "Producto"}
+                        className="aspect-square w-full object-cover"
+                      />
+                      {p.name && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+                          <span className="text-[10px] font-medium text-white line-clamp-1">
+                            {p.name}
+                          </span>
+                        </div>
+                      )}
+                      {existingProductId === p.id && (
+                        <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
+                          ✓
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <Button type="submit" loading={loading} size="lg" className="w-full">
+                Adaptar copy a mi marca
+              </Button>
+            </form>
+          </Card>
+        </>
       )}
 
       {loading && (

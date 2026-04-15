@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -72,6 +73,16 @@ export default function AdsSearchPage() {
   const [topAdId, setTopAdId] = useState<string | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showCustomCta, setShowCustomCta] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Show custom CTA after 30 seconds on the page
+  useEffect(() => {
+    timerRef.current = setTimeout(() => setShowCustomCta(true), 30000);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   // Load brand and history on mount
   useEffect(() => {
@@ -254,6 +265,28 @@ export default function AdsSearchPage() {
         </form>
       </Card>
 
+      {/* CTA: show after 30s */}
+      {showCustomCta && !loading && (
+        <Card className="mt-4 border-orange/30 bg-orange/5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                ¿Prefieres crear tu propio anuncio?
+              </p>
+              <p className="text-xs text-muted">
+                Sube tus propias imágenes de referencia y describe exactamente lo
+                que necesitas.
+              </p>
+            </div>
+            <Link href="/ads/custom" className="shrink-0">
+              <Button size="sm" variant="ghost">
+                Crear personalizado
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      )}
+
       {error && (
         <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-3">
           <p className="text-sm text-error">{error}</p>
@@ -294,8 +327,23 @@ export default function AdsSearchPage() {
           <p className="mt-2 text-sm text-muted">
             No se encontraron anuncios para esa búsqueda.
           </p>
+          <Card className="mt-6 text-left">
+            <p className="text-sm font-semibold text-ink">
+              ¿No encuentras lo que buscas?
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              Crea tu propio anuncio desde cero. Sube una imagen de referencia,
+              tu producto y describe lo que necesitas.
+            </p>
+            <Link href="/ads/custom">
+              <Button className="mt-3" size="sm">
+                Crear anuncio personalizado
+              </Button>
+            </Link>
+          </Card>
         </div>
       )}
+
     </div>
   );
 }

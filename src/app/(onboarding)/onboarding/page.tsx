@@ -61,9 +61,9 @@ export default function OnboardingPage() {
       if (result.warnings?.length > 0) {
         setWarnings(result.warnings);
         // Show warnings briefly, then redirect
-        setTimeout(() => router.replace("/ads/search"), 3000);
+        setTimeout(() => router.replace("/brand?from=onboarding"), 3000);
       } else {
-        router.replace("/ads/search");
+        router.replace("/brand?from=onboarding");
       }
     } catch (err) {
       if (err instanceof ApiError) {

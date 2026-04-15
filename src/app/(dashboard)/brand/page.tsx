@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -10,6 +12,9 @@ import { api, ApiError } from "@/lib/api";
 import type { Brand } from "@/lib/types";
 
 export default function BrandPage() {
+  const searchParams = useSearchParams();
+  const fromOnboarding = searchParams.get("from") === "onboarding";
+
   const [brand, setBrand] = useState<Brand | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -124,6 +129,28 @@ export default function BrandPage() {
           )}
         </div>
       </div>
+
+      {fromOnboarding && (
+        <div className="mt-4 rounded-md border border-orange/20 bg-orange/10 p-4">
+          <p className="text-sm font-medium text-ink">
+            Revisa la información de tu marca
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            Extrajimos estos datos de tu sitio web y logo. Si algo no es correcto,
+            puedes editarlo antes de empezar a crear campañas.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              Editar información
+            </Button>
+            <Link href="/ads/search">
+              <Button size="sm">
+                Todo bien, continuar
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mt-4 rounded-md border border-error/20 bg-error/10 p-3">

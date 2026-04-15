@@ -46,7 +46,7 @@ export default function NewCampaignPage() {
   const [pageId, setPageId] = useState("");
   const [objective, setObjective] = useState("OUTCOME_TRAFFIC");
   const [budgetType, setBudgetType] = useState("DAILY");
-  const [budgetAmount, setBudgetAmount] = useState("");
+  const [budgetAmount, setBudgetAmount] = useState("5000");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [destinationUrl, setDestinationUrl] = useState("");
@@ -58,32 +58,66 @@ export default function NewCampaignPage() {
     [],
   );
 
+  // Names for Meta objects
+  const [campaignName, setCampaignName] = useState("");
+  const [adSetName, setAdSetName] = useState("");
+  const [adName, setAdName] = useState("");
+
+  // Existing campaign/adset selection
+  const [campaignMode, setCampaignMode] = useState<"new" | "existing">("new");
+  const [metaCampaigns, setMetaCampaigns] = useState<{ id: string; name: string; objective: string; status: string }[]>([]);
+  const [selectedMetaCampaignId, setSelectedMetaCampaignId] = useState("");
+  const [selectedMetaCampaignName, setSelectedMetaCampaignName] = useState("");
+
+  const [adSetMode, setAdSetMode] = useState<"new" | "existing">("new");
+  const [metaAdSets, setMetaAdSets] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [selectedMetaAdSetId, setSelectedMetaAdSetId] = useState("");
+  const [selectedMetaAdSetName, setSelectedMetaAdSetName] = useState("");
+  const [loadingAdSets, setLoadingAdSets] = useState(false);
+
   // Generated image data from session
   const [generatedImageId, setGeneratedImageId] = useState("");
   const [variantIndex, setVariantIndex] = useState(0);
+  const [additionalImageIds, setAdditionalImageIds] = useState<string[]>([]);
   const [noImage, setNoImage] = useState(false);
 
   useEffect(() => {
-    // Find the generated image from session storage
+    // Find the most recent generated image from session storage
     let foundImage = false;
+    const imageKeys: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const key = sessionStorage.key(i);
       if (key?.startsWith("generatedImage_")) {
-        const data = JSON.parse(
-          sessionStorage.getItem(key)!,
-        ) as GenerateImageResponse;
-        setGeneratedImageId(data.generatedImageId);
-        setVariantIndex(data.variantIndex);
-        foundImage = true;
-
-        // Get variant index from session
-        const cachedAdId = key.replace("generatedImage_", "");
-        const savedVariant = sessionStorage.getItem(
-          `selectedVariant_${cachedAdId}`,
-        );
-        if (savedVariant) setVariantIndex(Number(savedVariant));
-        break;
+        imageKeys.push(key);
       }
+    }
+
+    // Use the last one written (most recent flow)
+    // Prefer "custom" key if present, otherwise take the last one
+    const targetKey =
+      imageKeys.find((k) => k === "generatedImage_custom") ??
+      imageKeys[imageKeys.length - 1];
+
+    if (targetKey) {
+      const data = JSON.parse(
+        sessionStorage.getItem(targetKey)!,
+      ) as GenerateImageResponse;
+      setGeneratedImageId(data.generatedImageId);
+      setVariantIndex(data.variantIndex);
+      foundImage = true;
+
+      // Get variant index from session
+      const cachedAdId = targetKey.replace("generatedImage_", "");
+      const savedVariant = sessionStorage.getItem(
+        `selectedVariant_${cachedAdId}`,
+      );
+      if (savedVariant) setVariantIndex(Number(savedVariant));
+
+      // Load selected variant image IDs
+      const variantIds = sessionStorage.getItem(
+        `imageVariantIds_${cachedAdId}`,
+      );
+      if (variantIds) setAdditionalImageIds(JSON.parse(variantIds));
     }
     if (!foundImage) setNoImage(true);
 
@@ -135,7 +169,41 @@ export default function NewCampaignPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingPages(false));
+
+    // Load existing Meta campaigns for the picker
+    api
+      .get<{ campaigns: { id: string; name: string; objective: string; status: string }[] }>(
+        "/connections/meta/campaigns",
+      )
+      .then((res) => setMetaCampaigns(res.campaigns.filter((c) => c.status !== "DELETED")))
+      .catch(() => {});
   }, []);
+
+  // Load ad sets when a Meta campaign is selected
+  async function handleSelectMetaCampaign(campaignId: string) {
+    setSelectedMetaCampaignId(campaignId);
+    const campaign = metaCampaigns.find((c) => c.id === campaignId);
+    setSelectedMetaCampaignName(campaign?.name ?? "");
+    setAdSetMode("new");
+    setSelectedMetaAdSetId("");
+    setSelectedMetaAdSetName("");
+
+    if (campaignId) {
+      setLoadingAdSets(true);
+      try {
+        const res = await api.get<{ adSets: { id: string; name: string; status: string }[] }>(
+          `/connections/meta/campaigns/${campaignId}/adsets`,
+        );
+        setMetaAdSets(res.adSets);
+      } catch {
+        setMetaAdSets([]);
+      } finally {
+        setLoadingAdSets(false);
+      }
+    } else {
+      setMetaAdSets([]);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -161,6 +229,18 @@ export default function NewCampaignPage() {
       if (endDate) body.endDate = endDate;
       if (destinationUrl.trim()) body.destinationUrl = destinationUrl.trim();
       if (interests.length > 0) body.interests = interests;
+      if (campaignName.trim()) body.campaignName = campaignName.trim();
+      if (adSetName.trim()) body.adSetName = adSetName.trim();
+      if (adName.trim()) body.adName = adName.trim();
+      if (additionalImageIds.length > 0) body.additionalImageIds = additionalImageIds;
+      if (campaignMode === "existing" && selectedMetaCampaignId) {
+        body.existingMetaCampaignId = selectedMetaCampaignId;
+        body.existingMetaCampaignName = selectedMetaCampaignName;
+      }
+      if (adSetMode === "existing" && selectedMetaAdSetId) {
+        body.existingMetaAdSetId = selectedMetaAdSetId;
+        body.existingMetaAdSetName = selectedMetaAdSetName;
+      }
 
       const campaign = await api.post<Campaign>("/campaigns/draft", body);
       router.push(`/campaigns/${campaign.id}`);
@@ -170,6 +250,20 @@ export default function NewCampaignPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  const selectedCurrency =
+    adAccounts.find((a) => a.id === adAccountId)?.currency || "COP";
+
+  function formatBudgetDisplay(value: string): string {
+    const num = value.replace(/\D/g, "");
+    if (!num) return "";
+    return Number(num).toLocaleString("es-CO");
+  }
+
+  function handleBudgetChange(raw: string) {
+    const digits = raw.replace(/\D/g, "");
+    setBudgetAmount(digits);
   }
 
   const isLoading = loadingDefaults || loadingAccounts || loadingPages;
@@ -265,6 +359,160 @@ export default function NewCampaignPage() {
           </div>
         </Card>
 
+        {/* Campaign selection — only show if there are existing campaigns */}
+        {metaCampaigns.length > 0 && (
+          <Card>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              Campaña en Meta
+            </h3>
+            <p className="mt-1 text-xs text-muted">
+              Puedes crear una campaña nueva o agregar este anuncio a una campaña existente.
+            </p>
+            <div className="mt-3 flex gap-3">
+              <button
+                type="button"
+                onClick={() => { setCampaignMode("new"); setSelectedMetaCampaignId(""); setSelectedMetaCampaignName(""); setAdSetMode("new"); setMetaAdSets([]); }}
+                className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                  campaignMode === "new"
+                    ? "border-orange text-orange"
+                    : "border-sand text-muted hover:border-orange/30"
+                }`}
+              >
+                Crear nueva
+              </button>
+              <button
+                type="button"
+                onClick={() => setCampaignMode("existing")}
+                className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                  campaignMode === "existing"
+                    ? "border-orange text-orange"
+                    : "border-sand text-muted hover:border-orange/30"
+                }`}
+              >
+                Usar existente
+              </button>
+            </div>
+            {campaignMode === "new" && (
+              <div className="mt-4">
+                <Input
+                  label="Nombre de la campaña"
+                  placeholder="Ej: Campaña Verano 2026"
+                  value={campaignName}
+                  onChange={(e) => setCampaignName(e.target.value)}
+                  helperText="Si lo dejas vacío se usará el headline del copy."
+                />
+              </div>
+            )}
+            {campaignMode === "existing" && (
+              <div className="mt-4">
+                <Select
+                  label="Campaña existente"
+                  value={selectedMetaCampaignId}
+                  onChange={(e) => handleSelectMetaCampaign(e.target.value)}
+                  placeholder="Selecciona una campaña"
+                  options={metaCampaigns.map((c) => ({
+                    value: c.id,
+                    label: `${c.name} (${c.status})`,
+                  }))}
+                />
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Ad Set — always shown (new campaign creates new, existing lets you pick) */}
+        {(campaignMode === "new" || (campaignMode === "existing" && selectedMetaCampaignId)) && (
+          <Card>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              Grupo de anuncios
+            </h3>
+            {campaignMode === "existing" && (
+              <>
+                <p className="mt-1 text-xs text-muted">
+                  Crea un grupo nuevo o agrega el anuncio a uno existente.
+                </p>
+                <div className="mt-3 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setAdSetMode("new"); setSelectedMetaAdSetId(""); setSelectedMetaAdSetName(""); }}
+                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                      adSetMode === "new"
+                        ? "border-orange text-orange"
+                        : "border-sand text-muted hover:border-orange/30"
+                    }`}
+                  >
+                    Crear nuevo
+                  </button>
+                  {metaAdSets.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setAdSetMode("existing")}
+                      className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                        adSetMode === "existing"
+                          ? "border-orange text-orange"
+                          : "border-sand text-muted hover:border-orange/30"
+                      }`}
+                    >
+                      Usar existente
+                    </button>
+                  )}
+                </div>
+                {loadingAdSets && (
+                  <div className="mt-4 flex items-center gap-2">
+                    <Spinner size="sm" />
+                    <span className="text-sm text-muted">Cargando grupos...</span>
+                  </div>
+                )}
+                {adSetMode === "existing" && !loadingAdSets && (
+                  <div className="mt-4">
+                    <Select
+                      label="Grupo de anuncios existente"
+                      value={selectedMetaAdSetId}
+                      onChange={(e) => {
+                        setSelectedMetaAdSetId(e.target.value);
+                        const adSet = metaAdSets.find((a) => a.id === e.target.value);
+                        setSelectedMetaAdSetName(adSet?.name ?? "");
+                      }}
+                      placeholder="Selecciona un grupo"
+                      options={metaAdSets.map((a) => ({
+                        value: a.id,
+                        label: `${a.name} (${a.status})`,
+                      }))}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {adSetMode === "new" && (
+              <div className="mt-4">
+                <Input
+                  label="Nombre del grupo de anuncios"
+                  placeholder="Ej: Mujeres 25-45 Colombia"
+                  value={adSetName}
+                  onChange={(e) => setAdSetName(e.target.value)}
+                  helperText="Si lo dejas vacío se generará automáticamente."
+                />
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Ad name — always shown */}
+        <Card>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+            Anuncio
+          </h3>
+          <div className="mt-4">
+            <Input
+              label="Nombre del anuncio"
+              placeholder="Ej: Variante A - Imagen principal"
+              value={adName}
+              onChange={(e) => setAdName(e.target.value)}
+              helperText="Si lo dejas vacío se generará automáticamente."
+            />
+          </div>
+        </Card>
+
         {/* Objective & Budget */}
         <Card>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
@@ -291,14 +539,14 @@ export default function NewCampaignPage() {
               </div>
               <div className="flex-1">
                 <Input
-                  label="Monto (moneda local)"
-                  type="number"
-                  min="1"
-                  step="0.01"
-                  placeholder="Ej: 10"
-                  value={budgetAmount}
-                  onChange={(e) => setBudgetAmount(e.target.value)}
+                  label={`Monto (${selectedCurrency})`}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Ej: 5.000"
+                  value={formatBudgetDisplay(budgetAmount)}
+                  onChange={(e) => handleBudgetChange(e.target.value)}
                   required
+                  helperText={`Mínimo recomendado: 5.000 ${selectedCurrency}`}
                 />
               </div>
             </div>
