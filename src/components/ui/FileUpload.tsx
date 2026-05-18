@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, type DragEvent, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from "react";
 
 interface FileUploadProps {
   label?: string;
   accept?: string;
   error?: string;
   helperText?: string;
+  value?: File | null;
   onChange: (file: File | null) => void;
 }
 
@@ -15,12 +16,33 @@ export function FileUpload({
   accept = "image/png,image/jpeg,image/webp",
   error,
   helperText,
+  value,
   onChange,
 }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+
+  // Sync internal visual state with the controlled `value` prop so the
+  // preview survives parent re-mounts (e.g., toggling between flows).
+  useEffect(() => {
+    if (value === undefined) return; // uncontrolled mode: ignore
+    if (!value) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPreview(null);
+      setFileName(null);
+      return;
+    }
+    setFileName(value.name);
+    if (value.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => setPreview(e.target?.result as string);
+      reader.readAsDataURL(value);
+    } else {
+      setPreview(null);
+    }
+  }, [value]);
 
   function handleFile(file: File | null) {
     if (!file) {

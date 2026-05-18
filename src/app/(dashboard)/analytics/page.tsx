@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 
 interface CampaignInsight {
   campaignId: string;
   campaignName: string;
   status: string;
+  dailyBudget: number | null;
   spend: number;
   impressions: number;
   reach: number;
@@ -23,10 +25,37 @@ interface CampaignInsight {
   roas: number | null;
 }
 
+type SuggestionType = "raiseBudget" | "lowerBudget" | "pause" | "activate" | "refreshCreatives";
+type EntityLevel = "campaign" | "adset" | "ad";
+
+interface Suggestion {
+  type: SuggestionType;
+  severity: "success" | "warning" | "error";
+  title: string;
+  description: string;
+  // For budget changes: the suggested new daily budget value
+  suggestedBudget?: number;
+}
+
+interface EntityMetrics {
+  level: EntityLevel;
+  id: string;
+  name: string;
+  status: string;
+  dailyBudget: number | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  frequency: number;
+}
+
 interface AdSetInsight {
   adSetId: string;
   adSetName: string;
   status: string;
+  dailyBudget: number | null;
   spend: number;
   impressions: number;
   reach: number;
@@ -110,6 +139,149 @@ function formatMoney(n: number): string {
   return `$${n.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const LEVEL_LABELS: Record<EntityLevel, { entity: string; pause: string; activate: string }> = {
+  campaign: { entity: "la campaña", pause: "Pausar campaña", activate: "Reactivar campaña" },
+  adset: { entity: "el grupo de anuncios", pause: "Pausar grupo", activate: "Reactivar grupo" },
+  ad: { entity: "el anuncio", pause: "Pausar anuncio", activate: "Reactivar anuncio" },
+};
+
+function getSuggestions(e: EntityMetrics): Suggestion[] {
+  const out: Suggestion[] = [];
+  const isActive = e.status === "ACTIVE";
+  const hasData = e.impressions > 0;
+  const L = LEVEL_LABELS[e.level];
+  const canEditBudget = e.level !== "ad"; // ads never carry their own budget
+
+  // 0 clicks but spending → pause urgently
+  if (isActive && e.spend > 5 && e.clicks === 0) {
+    out.push({
+      type: "pause",
+      severity: "error",
+      title: "Pausar urgente",
+      description: `Llevas ${formatMoney(e.spend)} sin un solo clic. Pausa ${L.entity} y revisa segmentación/creativo antes de seguir gastando.`,
+    });
+    return out;
+  }
+
+  // Fatiga: frecuencia muy alta
+  if (hasData && e.frequency > 3.5) {
+    out.push({
+      type: "refreshCreatives",
+      severity: "error",
+      title: "Refresca los creativos",
+      description: `Frecuencia de ${e.frequency.toFixed(1)} indica fatiga de audiencia. Cambia la imagen o el copy para evitar quemar la audiencia.`,
+    });
+    if (isActive) {
+      out.push({
+        type: "pause",
+        severity: "warning",
+        title: "Pausar mientras refrescas",
+        description: `Considera pausar ${L.entity} hasta tener creativos nuevos para no seguir gastando con CTR caído.`,
+      });
+    }
+  }
+
+  // CTR muy bajo con gasto significativo
+  if (hasData && e.ctr < 1 && e.spend > 10) {
+    out.push({
+      type: "pause",
+      severity: "warning",
+      title: "CTR bajo",
+      description: `CTR de ${e.ctr.toFixed(2)}% es bajo. Pausa o reduce presupuesto y revisa el creativo/audiencia.`,
+    });
+    if (canEditBudget && e.dailyBudget && e.dailyBudget > 5) {
+      const suggested = Math.max(5, Math.round(e.dailyBudget * 0.6));
+      out.push({
+        type: "lowerBudget",
+        severity: "warning",
+        title: `Bajar presupuesto a ${formatMoney(suggested)}`,
+        description: `Reducir el gasto diario un 40% mientras pruebas variantes. (Actual: ${formatMoney(e.dailyBudget)}/día)`,
+        suggestedBudget: suggested,
+      });
+    }
+  }
+
+  // Excelente desempeño + no saturado → escalar
+  if (
+    isActive &&
+    hasData &&
+    e.ctr >= 2 &&
+    e.frequency <= 2 &&
+    e.cpc <= 1.5 &&
+    canEditBudget &&
+    e.dailyBudget
+  ) {
+    const suggested = Math.round(e.dailyBudget * 1.2);
+    out.push({
+      type: "raiseBudget",
+      severity: "success",
+      title: `Subir presupuesto a ${formatMoney(suggested)}`,
+      description: `CTR ${e.ctr.toFixed(2)}% y frecuencia ${e.frequency.toFixed(1)} indican que rinde y aún hay margen. Sube +20% para escalar sin sobrecargar. (Actual: ${formatMoney(e.dailyBudget)}/día)`,
+      suggestedBudget: suggested,
+    });
+  }
+
+  // Pausado con buen historial → considerar reactivar
+  if (!isActive && e.status === "PAUSED" && hasData && e.ctr >= 1.5 && e.frequency <= 3) {
+    out.push({
+      type: "activate",
+      severity: "success",
+      title: L.activate,
+      description: `${e.name} estaba pausado con CTR ${e.ctr.toFixed(2)}% y frecuencia ${e.frequency.toFixed(1)}. Vale la pena reactivarlo.`,
+    });
+  }
+
+  return out;
+}
+
+function campaignToEntity(c: CampaignInsight): EntityMetrics {
+  return {
+    level: "campaign",
+    id: c.campaignId,
+    name: c.campaignName,
+    status: c.status,
+    dailyBudget: c.dailyBudget,
+    spend: c.spend,
+    impressions: c.impressions,
+    clicks: c.clicks,
+    ctr: c.ctr,
+    cpc: c.cpc,
+    frequency: c.frequency,
+  };
+}
+
+function adSetToEntity(a: AdSetInsight): EntityMetrics {
+  return {
+    level: "adset",
+    id: a.adSetId,
+    name: a.adSetName,
+    status: a.status,
+    dailyBudget: a.dailyBudget,
+    spend: a.spend,
+    impressions: a.impressions,
+    clicks: a.clicks,
+    ctr: a.ctr,
+    cpc: a.cpc,
+    frequency: a.frequency,
+  };
+}
+
+function adToEntity(ad: AdInsight): EntityMetrics {
+  return {
+    level: "ad",
+    id: ad.adId,
+    name: ad.adName,
+    status: ad.status,
+    dailyBudget: null,
+    spend: ad.spend,
+    impressions: ad.impressions,
+    clicks: ad.clicks,
+    ctr: ad.ctr,
+    cpc: ad.cpc,
+    frequency: ad.frequency,
+  };
+}
+
 export default function AnalyticsPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,6 +294,84 @@ export default function AnalyticsPage() {
   const [adSets, setAdSets] = useState<AdSetInsight[]>([]);
   const [ads, setAds] = useState<AdInsight[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
+
+  // Suggestions panel state
+  const [expandedSuggestions, setExpandedSuggestions] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+
+  const LEVEL_PATH: Record<EntityLevel, string> = {
+    campaign: "campaigns",
+    adset: "adsets",
+    ad: "ads",
+  };
+
+  async function refreshData() {
+    try {
+      const res = await api.get<DashboardData>("/connections/meta/insights/dashboard");
+      setData(res);
+      // Refresh drill-down too if applicable
+      if (selectedCampaign) {
+        const adSetsRes = await api.get<{ adSets: AdSetInsight[] }>(
+          `/connections/meta/campaigns/${selectedCampaign.campaignId}/adsets/insights`,
+        );
+        setAdSets(adSetsRes.adSets);
+      }
+      if (selectedAdSet) {
+        const adsRes = await api.get<{ ads: AdInsight[] }>(
+          `/connections/meta/adsets/${selectedAdSet.adSetId}/ads/insights`,
+        );
+        setAds(adsRes.ads);
+      }
+    } catch {
+      // Silent — keep stale data
+    }
+  }
+
+  async function applyStatusChange(
+    level: EntityLevel,
+    id: string,
+    status: "ACTIVE" | "PAUSED",
+  ) {
+    const actionKey = `${level}:${id}:status:${status}`;
+    setActionLoading(actionKey);
+    setActionError("");
+    try {
+      await api.patch(`/connections/meta/${LEVEL_PATH[level]}/${id}/status`, {
+        status,
+      });
+      await refreshData();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "No se pudo actualizar el estado.",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function applyBudgetChange(
+    level: EntityLevel,
+    id: string,
+    dailyBudget: number,
+  ) {
+    if (level === "ad") return; // ads never carry their own budget
+    const actionKey = `${level}:${id}:budget`;
+    setActionLoading(actionKey);
+    setActionError("");
+    try {
+      await api.patch(`/connections/meta/${LEVEL_PATH[level]}/${id}/budget`, {
+        dailyBudget,
+      });
+      await refreshData();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "No se pudo actualizar el presupuesto.",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   useEffect(() => {
     api
@@ -293,6 +543,12 @@ export default function AnalyticsPage() {
             Detalle por campaña
           </h3>
 
+          {actionError && (
+            <div className="mt-3 rounded-md border border-error/20 bg-error/10 p-3">
+              <p className="text-sm text-error">{actionError}</p>
+            </div>
+          )}
+
           <table className="mt-4 w-full text-left text-sm">
             <thead>
               <tr className="border-b border-sand text-xs font-semibold uppercase tracking-wide text-muted">
@@ -304,60 +560,88 @@ export default function AnalyticsPage() {
                 <th className="pb-3 pr-4 text-right">CPC</th>
                 <th className="pb-3 pr-4 text-right">CPM</th>
                 <th className="pb-3 pr-4 text-right">Freq.</th>
-                <th className="pb-3 text-right">Veredicto</th>
+                <th className="pb-3 pr-4 text-right">Veredicto</th>
+                <th className="pb-3 text-right">Sugerencias</th>
               </tr>
             </thead>
             <tbody>
               {campaigns.map((c) => {
                 const statusInfo = STATUS_MAP[c.status] || { label: c.status, variant: "default" as const };
                 const verdict = getVerdict(c);
+                const entity = campaignToEntity(c);
+                const suggestions = getSuggestions(entity);
+                const isExpanded = expandedSuggestions === c.campaignId;
                 return (
-                  <tr
-                    key={c.campaignId}
-                    className="border-b border-sand/50 last:border-0 cursor-pointer hover:bg-sand/10 transition-colors"
-                    onClick={() => handleCampaignClick(c)}
-                  >
-                    <td className="py-3 pr-4">
-                      <div className="flex flex-col gap-1">
-                        <span className="font-medium text-orange hover:text-orange/80 line-clamp-1">
-                          {c.campaignName}
-                        </span>
-                        <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-                      </div>
-                    </td>
-                    <td className="py-3 pr-4 text-right font-medium text-ink">
-                      {formatMoney(c.spend)}
-                    </td>
-                    <td className="py-3 pr-4 text-right text-charcoal">
-                      {formatNum(c.impressions)}
-                    </td>
-                    <td className="py-3 pr-4 text-right text-charcoal">
-                      {formatNum(c.clicks)}
-                    </td>
-                    <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(c.ctr)]}`}>
-                      {c.ctr.toFixed(2)}%
-                    </td>
-                    <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(c.cpc)]}`}>
-                      {formatMoney(c.cpc)}
-                    </td>
-                    <td className="py-3 pr-4 text-right text-charcoal">
-                      {formatMoney(c.cpm)}
-                    </td>
-                    <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(c.frequency)]}`}>
-                      {c.frequency.toFixed(1)}
-                    </td>
-                    <td className="py-3 text-right">
-                      {c.impressions > 0 ? (
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold ${HEALTH_BG[verdict.health]}`}
-                        >
-                          {verdict.icon} {verdict.label}
-                        </span>
-                      ) : (
-                        <Badge variant="muted">Sin datos</Badge>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={c.campaignId}>
+                    <tr className="border-b border-sand/50 last:border-0 hover:bg-sand/10 transition-colors">
+                      <td
+                        className="py-3 pr-4 cursor-pointer"
+                        onClick={() => handleCampaignClick(c)}
+                      >
+                        <div className="flex flex-col gap-1">
+                          <span className="font-medium text-orange hover:text-orange/80 line-clamp-1">
+                            {c.campaignName}
+                          </span>
+                          <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-right font-medium text-ink">
+                        {formatMoney(c.spend)}
+                      </td>
+                      <td className="py-3 pr-4 text-right text-charcoal">
+                        {formatNum(c.impressions)}
+                      </td>
+                      <td className="py-3 pr-4 text-right text-charcoal">
+                        {formatNum(c.clicks)}
+                      </td>
+                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(c.ctr)]}`}>
+                        {c.ctr.toFixed(2)}%
+                      </td>
+                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(c.cpc)]}`}>
+                        {formatMoney(c.cpc)}
+                      </td>
+                      <td className="py-3 pr-4 text-right text-charcoal">
+                        {formatMoney(c.cpm)}
+                      </td>
+                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(c.frequency)]}`}>
+                        {c.frequency.toFixed(1)}
+                      </td>
+                      <td className="py-3 pr-4 text-right">
+                        {c.impressions > 0 ? (
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold ${HEALTH_BG[verdict.health]}`}
+                          >
+                            {verdict.icon} {verdict.label}
+                          </span>
+                        ) : (
+                          <Badge variant="muted">Sin datos</Badge>
+                        )}
+                      </td>
+                      <td className="py-3 text-right">
+                        <SuggestionsBadgeCell
+                          suggestions={suggestions}
+                          isExpanded={isExpanded}
+                          onToggle={() =>
+                            setExpandedSuggestions(isExpanded ? null : c.campaignId)
+                          }
+                        />
+                      </td>
+                    </tr>
+                    {isExpanded && suggestions.length > 0 && (
+                      <SuggestionsExpandedRow
+                        entity={entity}
+                        suggestions={suggestions}
+                        colSpan={10}
+                        actionLoading={actionLoading}
+                        onStatusChange={(status) =>
+                          applyStatusChange("campaign", c.campaignId, status)
+                        }
+                        onBudgetChange={(budget) =>
+                          applyBudgetChange("campaign", c.campaignId, budget)
+                        }
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -379,62 +663,101 @@ export default function AnalyticsPage() {
           ) : adSets.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No se encontraron grupos de anuncios.</p>
           ) : (
-            <table className="mt-4 w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-sand text-xs font-semibold uppercase tracking-wide text-muted">
-                  <th className="pb-3 pr-4">Grupo de anuncios</th>
-                  <th className="pb-3 pr-4 text-right">Gasto</th>
-                  <th className="pb-3 pr-4 text-right">Impresiones</th>
-                  <th className="pb-3 pr-4 text-right">Clics</th>
-                  <th className="pb-3 pr-4 text-right">CTR</th>
-                  <th className="pb-3 pr-4 text-right">CPC</th>
-                  <th className="pb-3 pr-4 text-right">CPM</th>
-                  <th className="pb-3 text-right">Freq.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {adSets.map((a) => {
-                  const statusInfo = STATUS_MAP[a.status] || { label: a.status, variant: "default" as const };
-                  return (
-                    <tr
-                      key={a.adSetId}
-                      className="border-b border-sand/50 last:border-0 cursor-pointer hover:bg-sand/10 transition-colors"
-                      onClick={() => handleAdSetClick(a)}
-                    >
-                      <td className="py-3 pr-4">
-                        <div className="flex flex-col gap-1">
-                          <span className="font-medium text-orange hover:text-orange/80 line-clamp-1">
-                            {a.adSetName}
-                          </span>
-                          <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-                        </div>
-                      </td>
-                      <td className="py-3 pr-4 text-right font-medium text-ink">
-                        {formatMoney(a.spend)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatNum(a.impressions)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatNum(a.clicks)}
-                      </td>
-                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(a.ctr)]}`}>
-                        {a.ctr.toFixed(2)}%
-                      </td>
-                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(a.cpc)]}`}>
-                        {formatMoney(a.cpc)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatMoney(a.cpm)}
-                      </td>
-                      <td className={`py-3 text-right font-semibold ${HEALTH_COLORS[freqHealth(a.frequency)]}`}>
-                        {a.frequency.toFixed(1)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <>
+              {actionError && (
+                <div className="mt-3 rounded-md border border-error/20 bg-error/10 p-3">
+                  <p className="text-sm text-error">{actionError}</p>
+                </div>
+              )}
+              <table className="mt-4 w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-sand text-xs font-semibold uppercase tracking-wide text-muted">
+                    <th className="pb-3 pr-4">Grupo de anuncios</th>
+                    <th className="pb-3 pr-4 text-right">Presup.</th>
+                    <th className="pb-3 pr-4 text-right">Gasto</th>
+                    <th className="pb-3 pr-4 text-right">Impresiones</th>
+                    <th className="pb-3 pr-4 text-right">Clics</th>
+                    <th className="pb-3 pr-4 text-right">CTR</th>
+                    <th className="pb-3 pr-4 text-right">CPC</th>
+                    <th className="pb-3 pr-4 text-right">CPM</th>
+                    <th className="pb-3 pr-4 text-right">Freq.</th>
+                    <th className="pb-3 text-right">Sugerencias</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adSets.map((a) => {
+                    const statusInfo = STATUS_MAP[a.status] || { label: a.status, variant: "default" as const };
+                    const entity = adSetToEntity(a);
+                    const suggestions = getSuggestions(entity);
+                    const isExpanded = expandedSuggestions === a.adSetId;
+                    return (
+                      <Fragment key={a.adSetId}>
+                        <tr className="border-b border-sand/50 last:border-0 hover:bg-sand/10 transition-colors">
+                          <td
+                            className="py-3 pr-4 cursor-pointer"
+                            onClick={() => handleAdSetClick(a)}
+                          >
+                            <div className="flex flex-col gap-1">
+                              <span className="font-medium text-orange hover:text-orange/80 line-clamp-1">
+                                {a.adSetName}
+                              </span>
+                              <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {a.dailyBudget != null ? `${formatMoney(a.dailyBudget)}/día` : "—"}
+                          </td>
+                          <td className="py-3 pr-4 text-right font-medium text-ink">
+                            {formatMoney(a.spend)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatNum(a.impressions)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatNum(a.clicks)}
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(a.ctr)]}`}>
+                            {a.ctr.toFixed(2)}%
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(a.cpc)]}`}>
+                            {formatMoney(a.cpc)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatMoney(a.cpm)}
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(a.frequency)]}`}>
+                            {a.frequency.toFixed(1)}
+                          </td>
+                          <td className="py-3 text-right">
+                            <SuggestionsBadgeCell
+                              suggestions={suggestions}
+                              isExpanded={isExpanded}
+                              onToggle={() =>
+                                setExpandedSuggestions(isExpanded ? null : a.adSetId)
+                              }
+                            />
+                          </td>
+                        </tr>
+                        {isExpanded && suggestions.length > 0 && (
+                          <SuggestionsExpandedRow
+                            entity={entity}
+                            suggestions={suggestions}
+                            colSpan={10}
+                            actionLoading={actionLoading}
+                            onStatusChange={(status) =>
+                              applyStatusChange("adset", a.adSetId, status)
+                            }
+                            onBudgetChange={(budget) =>
+                              applyBudgetChange("adset", a.adSetId, budget)
+                            }
+                          />
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       )}
@@ -453,61 +776,94 @@ export default function AnalyticsPage() {
           ) : ads.length === 0 ? (
             <p className="mt-4 text-sm text-muted">No se encontraron anuncios.</p>
           ) : (
-            <table className="mt-4 w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-sand text-xs font-semibold uppercase tracking-wide text-muted">
-                  <th className="pb-3 pr-4">Anuncio</th>
-                  <th className="pb-3 pr-4 text-right">Gasto</th>
-                  <th className="pb-3 pr-4 text-right">Impresiones</th>
-                  <th className="pb-3 pr-4 text-right">Clics</th>
-                  <th className="pb-3 pr-4 text-right">CTR</th>
-                  <th className="pb-3 pr-4 text-right">CPC</th>
-                  <th className="pb-3 pr-4 text-right">CPM</th>
-                  <th className="pb-3 text-right">Freq.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ads.map((ad) => {
-                  const statusInfo = STATUS_MAP[ad.status] || { label: ad.status, variant: "default" as const };
-                  return (
-                    <tr
-                      key={ad.adId}
-                      className="border-b border-sand/50 last:border-0"
-                    >
-                      <td className="py-3 pr-4">
-                        <div className="flex flex-col gap-1">
-                          <span className="font-medium text-ink line-clamp-1">
-                            {ad.adName}
-                          </span>
-                          <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-                        </div>
-                      </td>
-                      <td className="py-3 pr-4 text-right font-medium text-ink">
-                        {formatMoney(ad.spend)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatNum(ad.impressions)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatNum(ad.clicks)}
-                      </td>
-                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(ad.ctr)]}`}>
-                        {ad.ctr.toFixed(2)}%
-                      </td>
-                      <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(ad.cpc)]}`}>
-                        {formatMoney(ad.cpc)}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-charcoal">
-                        {formatMoney(ad.cpm)}
-                      </td>
-                      <td className={`py-3 text-right font-semibold ${HEALTH_COLORS[freqHealth(ad.frequency)]}`}>
-                        {ad.frequency.toFixed(1)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <>
+              {actionError && (
+                <div className="mt-3 rounded-md border border-error/20 bg-error/10 p-3">
+                  <p className="text-sm text-error">{actionError}</p>
+                </div>
+              )}
+              <table className="mt-4 w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-sand text-xs font-semibold uppercase tracking-wide text-muted">
+                    <th className="pb-3 pr-4">Anuncio</th>
+                    <th className="pb-3 pr-4 text-right">Gasto</th>
+                    <th className="pb-3 pr-4 text-right">Impresiones</th>
+                    <th className="pb-3 pr-4 text-right">Clics</th>
+                    <th className="pb-3 pr-4 text-right">CTR</th>
+                    <th className="pb-3 pr-4 text-right">CPC</th>
+                    <th className="pb-3 pr-4 text-right">CPM</th>
+                    <th className="pb-3 pr-4 text-right">Freq.</th>
+                    <th className="pb-3 text-right">Sugerencias</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ads.map((ad) => {
+                    const statusInfo = STATUS_MAP[ad.status] || { label: ad.status, variant: "default" as const };
+                    const entity = adToEntity(ad);
+                    const suggestions = getSuggestions(entity);
+                    const isExpanded = expandedSuggestions === ad.adId;
+                    return (
+                      <Fragment key={ad.adId}>
+                        <tr className="border-b border-sand/50 last:border-0 hover:bg-sand/10 transition-colors">
+                          <td className="py-3 pr-4">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-medium text-ink line-clamp-1">
+                                {ad.adName}
+                              </span>
+                              <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-right font-medium text-ink">
+                            {formatMoney(ad.spend)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatNum(ad.impressions)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatNum(ad.clicks)}
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[ctrHealth(ad.ctr)]}`}>
+                            {ad.ctr.toFixed(2)}%
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[cpcHealth(ad.cpc)]}`}>
+                            {formatMoney(ad.cpc)}
+                          </td>
+                          <td className="py-3 pr-4 text-right text-charcoal">
+                            {formatMoney(ad.cpm)}
+                          </td>
+                          <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(ad.frequency)]}`}>
+                            {ad.frequency.toFixed(1)}
+                          </td>
+                          <td className="py-3 text-right">
+                            <SuggestionsBadgeCell
+                              suggestions={suggestions}
+                              isExpanded={isExpanded}
+                              onToggle={() =>
+                                setExpandedSuggestions(isExpanded ? null : ad.adId)
+                              }
+                            />
+                          </td>
+                        </tr>
+                        {isExpanded && suggestions.length > 0 && (
+                          <SuggestionsExpandedRow
+                            entity={entity}
+                            suggestions={suggestions}
+                            colSpan={9}
+                            actionLoading={actionLoading}
+                            onStatusChange={(status) =>
+                              applyStatusChange("ad", ad.adId, status)
+                            }
+                            onBudgetChange={() => {
+                              // Ads don't have their own budget; this is a no-op.
+                            }}
+                          />
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       )}
@@ -571,4 +927,161 @@ function getVerdict(c: CampaignInsight): {
   if (score >= 70) return { label: "Funciona", icon: "✓", health: "success" };
   if (score >= 35) return { label: "Revisar", icon: "~", health: "warning" };
   return { label: "Mejorar", icon: "✗", health: "error" };
+}
+
+/* ── Suggestions cell (badge that toggles the expanded row) ── */
+
+function SuggestionsBadgeCell({
+  suggestions,
+  isExpanded,
+  onToggle,
+}: {
+  suggestions: Suggestion[];
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  if (suggestions.length === 0) {
+    return <span className="text-xs text-muted">—</span>;
+  }
+  const severity = suggestions.some((s) => s.severity === "error")
+    ? "error"
+    : suggestions.some((s) => s.severity === "warning")
+      ? "warning"
+      : "success";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold transition-colors ${HEALTH_BG[severity]} hover:opacity-80`}
+    >
+      💡 {suggestions.length} {isExpanded ? "▴" : "▾"}
+    </button>
+  );
+}
+
+/* ── Suggestions expanded row ── */
+
+function SuggestionsExpandedRow({
+  entity,
+  suggestions,
+  colSpan,
+  actionLoading,
+  onStatusChange,
+  onBudgetChange,
+}: {
+  entity: EntityMetrics;
+  suggestions: Suggestion[];
+  colSpan: number;
+  actionLoading: string | null;
+  onStatusChange: (status: "ACTIVE" | "PAUSED") => void;
+  onBudgetChange: (newBudget: number) => void;
+}) {
+  return (
+    <tr className="border-b border-sand/50 bg-cream">
+      <td colSpan={colSpan} className="px-4 py-4">
+        <div className="flex flex-col gap-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Sugerencias para {entity.name}
+          </h4>
+          {suggestions.map((s, idx) => {
+            const actionKey =
+              s.type === "raiseBudget" || s.type === "lowerBudget"
+                ? `${entity.level}:${entity.id}:budget`
+                : s.type === "pause"
+                  ? `${entity.level}:${entity.id}:status:PAUSED`
+                  : s.type === "activate"
+                    ? `${entity.level}:${entity.id}:status:ACTIVE`
+                    : null;
+            const isLoading = actionKey === actionLoading;
+            return (
+              <div
+                key={idx}
+                className={`rounded-md border p-3 ${HEALTH_BG[s.severity]}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className={`text-sm font-semibold ${HEALTH_COLORS[s.severity]}`}>
+                      {s.title}
+                    </p>
+                    <p className="mt-1 text-xs text-charcoal">
+                      {s.description}
+                    </p>
+                  </div>
+                  {actionKey && (
+                    <SuggestionActionButton
+                      suggestion={s}
+                      loading={isLoading}
+                      disabled={actionLoading !== null}
+                      onApply={() => {
+                        if (s.type === "pause") {
+                          if (window.confirm(`¿Pausar "${entity.name}"?`)) {
+                            onStatusChange("PAUSED");
+                          }
+                        } else if (s.type === "activate") {
+                          if (window.confirm(`¿Reactivar "${entity.name}"?`)) {
+                            onStatusChange("ACTIVE");
+                          }
+                        } else if (
+                          (s.type === "raiseBudget" ||
+                            s.type === "lowerBudget") &&
+                          s.suggestedBudget
+                        ) {
+                          const input = window.prompt(
+                            `Nuevo presupuesto diario para "${entity.name}" (USD):`,
+                            String(s.suggestedBudget),
+                          );
+                          if (!input) return;
+                          const value = Number(input);
+                          if (!Number.isFinite(value) || value <= 0) {
+                            alert("Valor inválido.");
+                            return;
+                          }
+                          onBudgetChange(value);
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/* ── Suggestion action button ── */
+
+function SuggestionActionButton({
+  suggestion,
+  loading,
+  disabled,
+  onApply,
+}: {
+  suggestion: Suggestion;
+  loading: boolean;
+  disabled: boolean;
+  onApply: () => void;
+}) {
+  const labels: Record<SuggestionType, string> = {
+    raiseBudget: "Subir presupuesto",
+    lowerBudget: "Bajar presupuesto",
+    pause: "Pausar",
+    activate: "Reactivar",
+    refreshCreatives: "",
+  };
+  const label = labels[suggestion.type];
+  if (!label) return null;
+  return (
+    <Button
+      size="sm"
+      variant={suggestion.severity === "error" ? "primary" : "ghost"}
+      loading={loading}
+      disabled={disabled && !loading}
+      onClick={onApply}
+    >
+      {label}
+    </Button>
+  );
 }

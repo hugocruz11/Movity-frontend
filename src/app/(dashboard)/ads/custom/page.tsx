@@ -80,10 +80,14 @@ export default function CustomAdPage() {
   // Variants state
   const [variantCount, setVariantCount] = useState(6);
   const [variantFormat, setVariantFormat] = useState("feed");
-  const [generatingVariants, setGeneratingVariants] = useState(false);
-  const [imageVariants, setImageVariants] = useState<{ id: string; imageUrl: string }[]>([]);
-  const [selectedVariants, setSelectedVariants] = useState<Set<number>>(new Set());
+  const [generatingFormats, setGeneratingFormats] = useState<Set<string>>(new Set());
+  const [imageVariants, setImageVariants] = useState<
+    { id: string; imageUrl: string; format: string }[]
+  >([]);
+  const [selectedVariants, setSelectedVariants] = useState<Set<string>>(new Set());
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  const generatingVariants = generatingFormats.size > 0;
 
   // Reference image URL (returned after copy generation for use in image gen)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
@@ -93,6 +97,18 @@ export default function CustomAdPage() {
     api.get<Product[]>("/ads/products").then(setSavedProducts).catch(() => {});
     api.get<ReferenceImage[]>("/ads/reference-images").then(setSavedRefImages).catch(() => {});
   }, []);
+
+  async function handleDeleteProduct(id: string, name: string | null) {
+    const label = name ? `"${name}"` : "este producto";
+    if (!window.confirm(`¿Eliminar ${label}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await api.delete(`/ads/products/${id}`);
+      setSavedProducts((prev) => prev.filter((p) => p.id !== id));
+      if (existingProductId === id) setExistingProductId("");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "No se pudo eliminar el producto.");
+    }
+  }
 
   // ── Copy generation ──
 
@@ -274,22 +290,32 @@ export default function CustomAdPage() {
   async function handleEdit() {
     if (!imageResult || !editInstructions.trim()) return;
 
+    const targets =
+      editFormat === "all" ? getGeneratedFormats() : [editFormat];
+    if (targets.length === 0) return;
+
     setEditing(true);
     setImageError("");
 
     try {
-      const res = await api.post<EditImageResponse>("/ads/_/edit-image", {
-        generatedImageId: imageResult.generatedImageId,
-        format: editFormat,
-        instructions: editInstructions.trim(),
-      });
+      const results = await Promise.all(
+        targets.map((fmt) =>
+          api.post<EditImageResponse>("/ads/_/edit-image", {
+            generatedImageId: imageResult.generatedImageId,
+            format: fmt,
+            instructions: editInstructions.trim(),
+          }),
+        ),
+      );
 
       setImageResult((prev) => {
         if (!prev) return prev;
         const updated = { ...prev };
-        if (res.format === "feed") updated.feedImageUrl = res.imageUrl;
-        if (res.format === "vertical") updated.verticalImageUrl = res.imageUrl;
-        if (res.format === "story") updated.storyImageUrl = res.imageUrl;
+        for (const res of results) {
+          if (res.format === "feed") updated.feedImageUrl = res.imageUrl;
+          if (res.format === "vertical") updated.verticalImageUrl = res.imageUrl;
+          if (res.format === "story") updated.storyImageUrl = res.imageUrl;
+        }
         sessionStorage.setItem("generatedImage_custom", JSON.stringify(updated));
         return updated;
       });
@@ -303,39 +329,59 @@ export default function CustomAdPage() {
     }
   }
 
-  async function handleGenerateVariants() {
+  async function handleGenerateVariants(format: string) {
     if (!imageResult) return;
+    if (generatingFormats.has(format)) return;
 
-    setGeneratingVariants(true);
     setImageError("");
-    setImageVariants([]);
-    setSelectedVariants(new Set());
+    setGeneratingFormats((prev) => new Set(prev).add(format));
 
     try {
       const res = await api.post<ImageVariantsResponse>(
         "/ads/_/image-variants",
         {
           generatedImageId: imageResult.generatedImageId,
-          format: variantFormat,
+          format,
           count: variantCount,
         },
       );
 
-      setImageVariants(res.variants);
-      setSelectedVariants(new Set(res.variants.map((_, i) => i)));
+      const newVariants = res.variants.map((v) => ({ ...v, format: res.format }));
+      setImageVariants((prev) => {
+        const others = prev.filter((v) => v.format !== format);
+        return [...others, ...newVariants];
+      });
+      setSelectedVariants((prev) => {
+        const next = new Set(prev);
+        // Drop previous selections for this format, then auto-select the new ones.
+        for (const v of imageVariants) {
+          if (v.format === format) next.delete(v.id);
+        }
+        for (const v of newVariants) next.add(v.id);
+        return next;
+      });
     } catch (err) {
       if (err instanceof ApiError) setImageError(err.message);
       else setImageError("Error al generar variantes.");
     } finally {
-      setGeneratingVariants(false);
+      setGeneratingFormats((prev) => {
+        const next = new Set(prev);
+        next.delete(format);
+        return next;
+      });
     }
   }
 
-  function toggleVariantSelection(index: number) {
+  async function handleGenerateAllFormats() {
+    const formats = getGeneratedFormats();
+    await Promise.all(formats.map((f) => handleGenerateVariants(f)));
+  }
+
+  function toggleVariantSelection(id: string) {
     setSelectedVariants((prev) => {
       const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -349,7 +395,7 @@ export default function CustomAdPage() {
     }
     if (imageVariants.length > 0) {
       const selectedIds = imageVariants
-        .filter((_, i) => selectedVariants.has(i))
+        .filter((v) => selectedVariants.has(v.id))
         .map((v) => v.id);
       sessionStorage.setItem("imageVariantIds_custom", JSON.stringify(selectedIds));
     }
@@ -401,6 +447,7 @@ export default function CustomAdPage() {
           />
           <FileUpload
             label="Foto del producto"
+            value={productImage}
             onChange={setProductImage}
             helperText="La IA usará esta imagen para generar el creativo."
           />
@@ -408,34 +455,47 @@ export default function CustomAdPage() {
       ) : (
         <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
           {savedProducts.map((p) => (
-            <button
+            <div
               key={p.id}
-              type="button"
-              onClick={() => setExistingProductId(p.id)}
               className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
                 existingProductId === p.id
                   ? "border-orange ring-2 ring-orange/30"
                   : "border-sand hover:border-orange/30"
               }`}
             >
-              <img
-                src={`${API_HOST}${p.imageUrl}`}
-                alt={p.name || "Producto"}
-                className="aspect-square w-full object-cover"
-              />
-              {p.name && (
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
-                  <span className="text-[10px] font-medium text-white line-clamp-1">
-                    {p.name}
-                  </span>
-                </div>
-              )}
-              {existingProductId === p.id && (
-                <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
-                  ✓
-                </div>
-              )}
-            </button>
+              <button
+                type="button"
+                onClick={() => setExistingProductId(p.id)}
+                className="block w-full"
+              >
+                <img
+                  src={`${API_HOST}${p.imageUrl}`}
+                  alt={p.name || "Producto"}
+                  className="aspect-square w-full object-cover"
+                />
+                {p.name && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+                    <span className="text-[10px] font-medium text-white line-clamp-1">
+                      {p.name}
+                    </span>
+                  </div>
+                )}
+                {existingProductId === p.id && (
+                  <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
+                    ✓
+                  </div>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteProduct(p.id, p.name)}
+                aria-label="Eliminar producto"
+                title="Eliminar producto"
+                className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[12px] leading-none text-white transition-colors hover:bg-error"
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -482,6 +542,7 @@ export default function CustomAdPage() {
         <div className="mt-3">
           <FileUpload
             label="Imagen de referencia"
+            value={referenceImage}
             onChange={setReferenceImage}
             helperText="La IA usará esta imagen como inspiración para el estilo visual."
           />
@@ -981,11 +1042,14 @@ export default function CustomAdPage() {
                   label="Formato a editar"
                   value={editFormat}
                   onChange={(e) => setEditFormat(e.target.value)}
-                  options={getGeneratedFormats().map((f) => ({
-                    value: f,
-                    label:
-                      FORMAT_OPTIONS.find((o) => o.key === f)?.label ?? f,
-                  }))}
+                  options={[
+                    { value: "all", label: "Todos los formatos" },
+                    ...getGeneratedFormats().map((f) => ({
+                      value: f,
+                      label:
+                        FORMAT_OPTIONS.find((o) => o.key === f)?.label ?? f,
+                    })),
+                  ]}
                 />
               )}
               <Textarea
@@ -1000,7 +1064,9 @@ export default function CustomAdPage() {
                 disabled={!editInstructions.trim()}
                 size="sm"
               >
-                Aplicar cambios
+                {editFormat === "all"
+                  ? `Aplicar cambios a los ${getGeneratedFormats().length} formatos`
+                  : "Aplicar cambios"}
               </Button>
             </div>
           </Card>
@@ -1068,60 +1134,75 @@ export default function CustomAdPage() {
             </div>
           </Card>
 
-          {imageVariants.length === 0 && (
-            <Card>
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-                Configurar variantes
-              </h3>
-              <p className="mt-1 text-xs text-muted">
-                Genera hasta 10 variantes de tu imagen aprobada para A/B testing.
-              </p>
-              <div className="mt-4 flex gap-4">
-                {getGeneratedFormats().length > 1 && (
-                  <div className="w-48">
-                    <Select
-                      label="Formato base"
-                      value={variantFormat}
-                      onChange={(e) => setVariantFormat(e.target.value)}
-                      options={getGeneratedFormats().map((f) => ({
-                        value: f,
-                        label:
-                          FORMAT_OPTIONS.find((o) => o.key === f)?.label ?? f,
-                      }))}
-                    />
-                  </div>
-                )}
-                <div className="w-32">
+          <Card>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              Configurar variantes
+            </h3>
+            <p className="mt-1 text-xs text-muted">
+              Genera hasta 10 variantes por formato para A/B testing. Cada variante respeta el tamaño del formato base.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-4">
+              {getGeneratedFormats().length > 1 && (
+                <div className="w-48">
                   <Select
-                    label="Cantidad"
-                    value={String(variantCount)}
-                    onChange={(e) => setVariantCount(Number(e.target.value))}
-                    options={Array.from({ length: 10 }, (_, i) => ({
-                      value: String(i + 1),
-                      label: String(i + 1),
-                    }))}
+                    label="Formato"
+                    value={variantFormat}
+                    onChange={(e) => setVariantFormat(e.target.value)}
+                    options={getGeneratedFormats().map((f) => {
+                      const has = imageVariants.some((v) => v.format === f);
+                      const label =
+                        FORMAT_OPTIONS.find((o) => o.key === f)?.label ?? f;
+                      return { value: f, label: has ? `${label} ✓` : label };
+                    })}
                   />
                 </div>
+              )}
+              <div className="w-32">
+                <Select
+                  label="Cantidad"
+                  value={String(variantCount)}
+                  onChange={(e) => setVariantCount(Number(e.target.value))}
+                  options={Array.from({ length: 10 }, (_, i) => ({
+                    value: String(i + 1),
+                    label: String(i + 1),
+                  }))}
+                />
               </div>
-              <Button
-                onClick={handleGenerateVariants}
-                loading={generatingVariants}
-                size="lg"
-                className="mt-4 w-full"
-              >
-                Generar {variantCount} variante{variantCount > 1 ? "s" : ""}
-              </Button>
-            </Card>
-          )}
-
-          {generatingVariants && (
-            <div className="flex flex-col items-center gap-3 py-8">
-              <Spinner size="lg" />
-              <p className="text-sm text-muted">
-                Generando {variantCount} variantes... esto puede tardar.
-              </p>
             </div>
-          )}
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <Button
+                onClick={() => handleGenerateVariants(variantFormat)}
+                loading={generatingFormats.has(variantFormat)}
+                disabled={generatingVariants}
+                size="lg"
+                className="flex-1"
+              >
+                {imageVariants.some((v) => v.format === variantFormat)
+                  ? "Regenerar"
+                  : "Generar"}{" "}
+                {variantCount} variante{variantCount > 1 ? "s" : ""} para{" "}
+                {FORMAT_OPTIONS.find((o) => o.key === variantFormat)?.label ??
+                  variantFormat}
+              </Button>
+              {getGeneratedFormats().length > 1 && (
+                <Button
+                  variant="ghost"
+                  onClick={handleGenerateAllFormats}
+                  loading={generatingVariants}
+                  disabled={generatingVariants}
+                  size="lg"
+                  className="flex-1"
+                >
+                  Generar para todos los formatos
+                </Button>
+              )}
+            </div>
+            {generatingVariants && (
+              <p className="mt-3 text-xs text-muted">
+                Generando {Array.from(generatingFormats).join(", ")}... esto puede tardar.
+              </p>
+            )}
+          </Card>
 
           {imageVariants.length > 0 && (
             <>
@@ -1134,56 +1215,80 @@ export default function CustomAdPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {imageVariants.map((v, i) => (
-                  <div
-                    key={v.id}
-                    className={`group relative overflow-hidden rounded-lg border-2 transition-colors ${
-                      selectedVariants.has(i)
-                        ? "border-orange ring-2 ring-orange/30"
-                        : "border-sand hover:border-orange/30"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleVariantSelection(i)}
-                      className="block w-full"
-                    >
-                      <img
-                        src={`${API_HOST}${v.imageUrl}`}
-                        alt={`Variante ${i + 1}`}
-                        className="w-full"
-                      />
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
-                        <span className="text-xs font-medium text-white">
-                          Variante {i + 1}
-                        </span>
+              {getGeneratedFormats()
+                .filter((fmt) => imageVariants.some((v) => v.format === fmt))
+                .map((fmt) => {
+                  const groupVariants = imageVariants.filter((v) => v.format === fmt);
+                  const formatLabel =
+                    FORMAT_OPTIONS.find((o) => o.key === fmt)?.label ?? fmt;
+                  return (
+                    <div key={fmt} className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-ink">
+                          {formatLabel}
+                        </h3>
+                        <Badge>{groupVariants.length}</Badge>
                       </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setLightboxIndex(i);
-                      }}
-                      aria-label={`Ver variante ${i + 1} en grande`}
-                      className="absolute top-2 left-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100 focus:opacity-100"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="11" cy="11" r="8" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                        <line x1="11" y1="8" x2="11" y2="14" />
-                        <line x1="8" y1="11" x2="14" y2="11" />
-                      </svg>
-                    </button>
-                    {selectedVariants.has(i) && (
-                      <div className="pointer-events-none absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-orange text-xs text-white">
-                        ✓
+                      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                        {groupVariants.map((v) => {
+                          const globalIndex = imageVariants.findIndex(
+                            (x) => x.id === v.id,
+                          );
+                          const labelIndex =
+                            groupVariants.findIndex((x) => x.id === v.id) + 1;
+                          return (
+                            <div
+                              key={v.id}
+                              className={`group relative overflow-hidden rounded-lg border-2 transition-colors ${
+                                selectedVariants.has(v.id)
+                                  ? "border-orange ring-2 ring-orange/30"
+                                  : "border-sand hover:border-orange/30"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleVariantSelection(v.id)}
+                                className="block w-full"
+                              >
+                                <img
+                                  src={`${API_HOST}${v.imageUrl}`}
+                                  alt={`Variante ${labelIndex} ${formatLabel}`}
+                                  className="w-full"
+                                />
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
+                                  <span className="text-xs font-medium text-white">
+                                    Variante {labelIndex}
+                                  </span>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLightboxIndex(globalIndex);
+                                }}
+                                aria-label={`Ver variante ${labelIndex} en grande`}
+                                className="absolute top-2 left-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100 focus:opacity-100"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="11" cy="11" r="8" />
+                                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                  <line x1="11" y1="8" x2="11" y2="14" />
+                                  <line x1="8" y1="11" x2="14" y2="11" />
+                                </svg>
+                              </button>
+                              {selectedVariants.has(v.id) && (
+                                <div className="pointer-events-none absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-orange text-xs text-white">
+                                  ✓
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+                    </div>
+                  );
+                })}
 
               <p className="text-sm text-muted">
                 {selectedVariants.size} de {imageVariants.length} seleccionadas
@@ -1227,18 +1332,6 @@ export default function CustomAdPage() {
             >
               ← Volver a editar
             </Button>
-            {imageVariants.length > 0 && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setImageVariants([]);
-                  setSelectedVariants(new Set());
-                }}
-                className="flex-1"
-              >
-                Regenerar variantes
-              </Button>
-            )}
             <Button
               onClick={handleContinueToCampaign}
               size="lg"

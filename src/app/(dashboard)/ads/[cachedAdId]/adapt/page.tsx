@@ -50,6 +50,18 @@ export default function AdaptCopyPage() {
       .catch(() => {});
   }, [cachedAdId]);
 
+  async function handleDeleteProduct(id: string, name: string | null) {
+    const label = name ? `"${name}"` : "este producto";
+    if (!window.confirm(`¿Eliminar ${label}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await api.delete(`/ads/products/${id}`);
+      setSavedProducts((prev) => prev.filter((p) => p.id !== id));
+      if (existingProductId === id) setExistingProductId("");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "No se pudo eliminar el producto.");
+    }
+  }
+
   async function handleAdapt(e: FormEvent) {
     e.preventDefault();
     setError("");
@@ -268,6 +280,7 @@ export default function AdaptCopyPage() {
                   />
                   <FileUpload
                     label="Foto del producto"
+                    value={productImage}
                     onChange={setProductImage}
                     helperText="La IA usará esta imagen para generar el creativo."
                   />
@@ -275,34 +288,47 @@ export default function AdaptCopyPage() {
               ) : (
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
                   {savedProducts.map((p) => (
-                    <button
+                    <div
                       key={p.id}
-                      type="button"
-                      onClick={() => setExistingProductId(p.id)}
                       className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
                         existingProductId === p.id
                           ? "border-orange ring-2 ring-orange/30"
                           : "border-sand hover:border-orange/30"
                       }`}
                     >
-                      <img
-                        src={`${API_HOST}${p.imageUrl}`}
-                        alt={p.name || "Producto"}
-                        className="aspect-square w-full object-cover"
-                      />
-                      {p.name && (
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
-                          <span className="text-[10px] font-medium text-white line-clamp-1">
-                            {p.name}
-                          </span>
-                        </div>
-                      )}
-                      {existingProductId === p.id && (
-                        <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
-                          ✓
-                        </div>
-                      )}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setExistingProductId(p.id)}
+                        className="block w-full"
+                      >
+                        <img
+                          src={`${API_HOST}${p.imageUrl}`}
+                          alt={p.name || "Producto"}
+                          className="aspect-square w-full object-cover"
+                        />
+                        {p.name && (
+                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+                            <span className="text-[10px] font-medium text-white line-clamp-1">
+                              {p.name}
+                            </span>
+                          </div>
+                        )}
+                        {existingProductId === p.id && (
+                          <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
+                            ✓
+                          </div>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteProduct(p.id, p.name)}
+                        aria-label="Eliminar producto"
+                        title="Eliminar producto"
+                        className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[12px] leading-none text-white transition-colors hover:bg-error"
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
