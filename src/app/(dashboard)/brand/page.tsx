@@ -11,6 +11,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { api, ApiError } from "@/lib/api";
 import type { Brand } from "@/lib/types";
 
+const API_HOST = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
 export default function BrandPage() {
   const searchParams = useSearchParams();
   const fromOnboarding = searchParams.get("from") === "onboarding";
@@ -164,7 +166,7 @@ export default function BrandPage() {
           <div className="flex items-start gap-4">
             {brand.logoUrl && (
               <img
-                src={`http://localhost:3000${brand.logoUrl}`}
+                src={`${API_HOST}${brand.logoUrl}`}
                 alt="Logo"
                 className="h-16 w-16 rounded-md border border-sand object-contain"
               />
