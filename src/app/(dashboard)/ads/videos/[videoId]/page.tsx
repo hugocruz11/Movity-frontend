@@ -5,21 +5,10 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
+import { VideoTemplateView } from "@/components/VideoTemplateView";
 import { api, ApiError } from "@/lib/api";
-
-type Lang = "es" | "en" | "pt";
-const LANG_LABELS: Record<Lang, string> = {
-  es: "Español",
-  en: "Inglés",
-  pt: "Portugués",
-};
-
-function normalizeLang(v: unknown): Lang {
-  return v === "en" || v === "pt" || v === "es" ? v : "es";
-}
 
 interface VideoAd {
   id: string;
@@ -37,52 +26,17 @@ interface VideoAd {
   publisherPlatform: string[];
 }
 
-interface BlueprintScene {
-  start: number;
-  end: number;
-  purpose: string;
-  visualDescription: string;
-  onScreenText: string | null;
-  spokenText: string | null;
-}
-
 interface BlueprintData {
-  totalDuration: number;
-  hook: {
-    start: number;
-    end: number;
-    visualDescription: string;
-    spokenText: string | null;
-    style: string;
-  };
-  scenes: BlueprintScene[];
-  cta: {
-    start: number;
-    end: number;
-    text: string;
-    visualDescription: string;
-  } | null;
-  narrationTone: string;
-  pacing: string;
-  musicVibe: string;
-  format: string;
-  keyHooks: string[];
-  takeaways: string[];
+  template: string;
+  _meta?: { lang?: string; promptVersion?: string };
 }
 
 interface BlueprintResponse {
   id: string;
   blueprint: BlueprintData;
-  lang: Lang;
+  lang: string;
   cached: boolean;
   createdAt: string;
-}
-
-function fmtTime(secs: number): string {
-  if (!Number.isFinite(secs) || secs < 0) return "0s";
-  const m = Math.floor(secs / 60);
-  const s = Math.round(secs % 60);
-  return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
 }
 
 export default function VideoBlueprintPage() {
@@ -92,7 +46,6 @@ export default function VideoBlueprintPage() {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
-  const [lang, setLang] = useState<Lang>("es");
   const [isFavorite, setIsFavorite] = useState(false);
 
   useEffect(() => {
@@ -111,7 +64,7 @@ export default function VideoBlueprintPage() {
       if (prev) await api.delete(`/video-ads/favorites/${videoId}`);
       else await api.post(`/video-ads/favorites/${videoId}`, {});
     } catch {
-      setIsFavorite(prev); // revert
+      setIsFavorite(prev);
     }
   }
 
@@ -132,10 +85,9 @@ export default function VideoBlueprintPage() {
     setError("");
     try {
       const res = await api.get<BlueprintResponse>(
-        `/video-ads/${videoId}/blueprint?lang=${lang}`,
+        `/video-ads/${videoId}/blueprint`,
       );
-      setBlueprint({ ...res, lang: normalizeLang(res.lang) });
-      setLang(normalizeLang(res.lang));
+      setBlueprint(res);
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);
       else setError("Error al analizar el video.");
@@ -147,13 +99,8 @@ export default function VideoBlueprintPage() {
   async function handleSave() {
     if (!videoId || !blueprint) return;
     const defaultName =
-      video?.headline?.slice(0, 60) ||
-      video?.brandName ||
-      "Mi blueprint";
-    const name = window.prompt(
-      "Nombre para esta estructura:",
-      defaultName,
-    );
+      video?.headline?.slice(0, 60) || video?.brandName || "Mi template";
+    const name = window.prompt("Nombre para este template:", defaultName);
     if (!name || !name.trim()) return;
     try {
       await api.post(`/video-ads/${videoId}/blueprint/save`, {
@@ -161,18 +108,15 @@ export default function VideoBlueprintPage() {
       });
       alert(`Guardado como "${name.trim()}".`);
     } catch (err) {
-      alert(
-        err instanceof ApiError ? err.message : "No se pudo guardar.",
-      );
+      alert(err instanceof ApiError ? err.message : "No se pudo guardar.");
     }
   }
 
   async function handleRegenerate() {
     if (!videoId) return;
-    const langLabel = LANG_LABELS[lang];
     if (
       !window.confirm(
-        `¿Regenerar el análisis en ${langLabel}? Reemplaza el análisis actual.`,
+        "¿Regenerar el template? Reemplaza el análisis actual.",
       )
     ) {
       return;
@@ -182,9 +126,9 @@ export default function VideoBlueprintPage() {
     try {
       const res = await api.post<BlueprintResponse>(
         `/video-ads/${videoId}/blueprint/regenerate`,
-        { lang },
+        {},
       );
-      setBlueprint({ ...res, lang: normalizeLang(res.lang) });
+      setBlueprint(res);
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);
       else setError("Error al regenerar el análisis.");
@@ -295,34 +239,20 @@ export default function VideoBlueprintPage() {
           )}
         </div>
 
-        {/* Blueprint */}
+        {/* Template */}
         <div className="flex flex-col gap-4">
           {!blueprint && !analyzing && (
             <Card>
               <h2 className="text-lg font-semibold text-ink">
-                Estructura del video
+                Estructura del anuncio
               </h2>
               <p className="mt-1 text-sm text-muted">
-                La IA analiza el video y extrae la estructura escena por
-                escena: hook, narrativa, CTA, ritmo, tono. Úsala como
-                plantilla para crear tu propia versión.
+                La IA analiza el script del video y extrae su estructura como un
+                template universal neutro. Reemplazás las variables entre
+                [CORCHETES] con tu producto y tenés un anuncio nuevo listo.
               </p>
-              <div className="mt-4 flex items-end gap-3">
-                <div className="w-48">
-                  <Select
-                    label="Idioma del análisis"
-                    value={lang}
-                    onChange={(e) => setLang(e.target.value as Lang)}
-                    options={[
-                      { value: "es", label: "Español" },
-                      { value: "en", label: "Inglés" },
-                      { value: "pt", label: "Portugués" },
-                    ]}
-                  />
-                </div>
-                <Button onClick={handleAnalyze}>
-                  Analizar con IA
-                </Button>
+              <div className="mt-4">
+                <Button onClick={handleAnalyze}>Analizar con IA</Button>
               </div>
             </Card>
           )}
@@ -343,211 +273,27 @@ export default function VideoBlueprintPage() {
           )}
 
           {blueprint && !analyzing && (
-            <BlueprintView
-              data={blueprint.blueprint}
-              cached={blueprint.cached}
-              blueprintLang={blueprint.lang}
-              lang={lang}
-              onLangChange={setLang}
-              onRegenerate={handleRegenerate}
-              onSave={handleSave}
+            <VideoTemplateView
+              template={blueprint.blueprint.template}
+              metaLine={
+                blueprint.cached
+                  ? "Análisis previo (cacheado)."
+                  : "Análisis recién generado."
+              }
+              actions={
+                <>
+                  <Button size="sm" variant="ghost" onClick={handleRegenerate}>
+                    Regenerar
+                  </Button>
+                  <Button size="sm" onClick={handleSave}>
+                    💾 Guardar
+                  </Button>
+                </>
+              }
             />
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function BlueprintView({
-  data,
-  cached,
-  blueprintLang,
-  lang,
-  onLangChange,
-  onRegenerate,
-  onSave,
-}: {
-  data: BlueprintData;
-  cached: boolean;
-  blueprintLang: Lang;
-  lang: Lang;
-  onLangChange: (l: Lang) => void;
-  onRegenerate: () => void;
-  onSave?: () => void;
-}) {
-  const langChanged = lang !== blueprintLang;
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-ink">
-            Estructura del video
-          </h2>
-          <p className="mt-1 text-xs text-muted">
-            {cached
-              ? `Análisis previo en ${LANG_LABELS[normalizeLang(blueprintLang)]} (cacheado).`
-              : `Análisis generado en ${LANG_LABELS[normalizeLang(blueprintLang)]}.`}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="w-40">
-            <Select
-              label="Idioma"
-              value={lang}
-              onChange={(e) => onLangChange(e.target.value as Lang)}
-              options={[
-                { value: "es", label: "Español" },
-                { value: "en", label: "Inglés" },
-                { value: "pt", label: "Portugués" },
-              ]}
-            />
-          </div>
-          <Button
-            variant={langChanged ? "primary" : "ghost"}
-            size="sm"
-            onClick={onRegenerate}
-          >
-            {langChanged
-              ? `Regenerar en ${LANG_LABELS[lang]}`
-              : "Regenerar"}
-          </Button>
-          {onSave && (
-            <Button size="sm" onClick={onSave}>
-              💾 Guardar
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Meta */}
-      <Card>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Meta label="Duración" value={fmtTime(data.totalDuration)} />
-          <Meta label="Formato" value={data.format} />
-          <Meta label="Ritmo" value={data.pacing} />
-          <Meta label="Música" value={data.musicVibe} />
-        </div>
-        <div className="mt-3 border-t border-sand pt-3">
-          <Meta label="Tono de narración" value={data.narrationTone} />
-        </div>
-      </Card>
-
-      {/* Hook */}
-      <Card>
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-          Hook ({fmtTime(data.hook.start)} – {fmtTime(data.hook.end)})
-        </h3>
-        <p className="mt-2 text-sm font-semibold text-ink">{data.hook.style}</p>
-        <p className="mt-1 text-sm text-charcoal">
-          {data.hook.visualDescription}
-        </p>
-        {data.hook.spokenText && (
-          <p className="mt-2 text-xs italic text-muted">
-            “{data.hook.spokenText}”
-          </p>
-        )}
-      </Card>
-
-      {/* Scenes */}
-      <Card>
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-          Escenas
-        </h3>
-        <div className="mt-3 flex flex-col gap-3">
-          {data.scenes.map((scene, idx) => (
-            <div
-              key={idx}
-              className="flex gap-3 rounded-md border border-sand p-3"
-            >
-              <div className="flex w-20 shrink-0 flex-col items-center justify-center rounded-md bg-cream py-2">
-                <span className="text-[10px] uppercase tracking-wide text-muted">
-                  Escena {idx + 1}
-                </span>
-                <span className="text-xs font-semibold text-ink">
-                  {fmtTime(scene.start)}
-                </span>
-                <span className="text-[10px] text-muted">
-                  → {fmtTime(scene.end)}
-                </span>
-              </div>
-              <div className="flex flex-1 flex-col gap-1.5">
-                <Badge variant="default">{scene.purpose}</Badge>
-                <p className="text-sm text-charcoal">
-                  {scene.visualDescription}
-                </p>
-                {scene.onScreenText && (
-                  <p className="text-xs text-muted">
-                    <span className="font-semibold">Texto en pantalla:</span>{" "}
-                    {scene.onScreenText}
-                  </p>
-                )}
-                {scene.spokenText && (
-                  <p className="text-xs italic text-muted">
-                    “{scene.spokenText}”
-                  </p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* CTA */}
-      {data.cta && (
-        <Card>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            CTA ({fmtTime(data.cta.start)} – {fmtTime(data.cta.end)})
-          </h3>
-          <p className="mt-2 text-sm font-semibold text-orange">
-            {data.cta.text}
-          </p>
-          <p className="mt-1 text-sm text-charcoal">
-            {data.cta.visualDescription}
-          </p>
-        </Card>
-      )}
-
-      {/* Insights */}
-      {(data.keyHooks?.length > 0 || data.takeaways?.length > 0) && (
-        <Card>
-          {data.keyHooks?.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Insights clave
-              </h3>
-              <ul className="mt-2 list-disc pl-5 text-sm text-charcoal">
-                {data.keyHooks.map((h, i) => (
-                  <li key={i}>{h}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {data.takeaways?.length > 0 && (
-            <div className="mt-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Qué lo hace funcionar
-              </h3>
-              <ul className="mt-2 list-disc pl-5 text-sm text-charcoal">
-                {data.takeaways.map((t, i) => (
-                  <li key={i}>{t}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function Meta({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-        {label}
-      </p>
-      <p className="mt-0.5 text-sm font-medium text-ink">{value}</p>
     </div>
   );
 }

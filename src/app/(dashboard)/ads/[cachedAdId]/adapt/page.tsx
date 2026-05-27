@@ -4,10 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
-import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { FileUpload } from "@/components/ui/FileUpload";
-import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { Spinner } from "@/components/ui/Spinner";
 import { CopyVariantPicker } from "@/components/CopyVariantPicker";
@@ -22,12 +19,9 @@ export default function AdaptCopyPage() {
   const router = useRouter();
   const [ad, setAd] = useState<CachedAd | null>(null);
 
-  // Form state
-  const [mode, setMode] = useState<"new" | "existing">("new");
-  const [productName, setProductName] = useState("");
-  const [productImage, setProductImage] = useState<File | null>(null);
-  const [existingProductId, setExistingProductId] = useState("");
-  const [savedProducts, setSavedProducts] = useState<Product[]>([]);
+  // Product picker — only complete products are eligible
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState("");
   const [userInstructions, setUserInstructions] = useState("");
 
   // Source mode: new (generate) or saved (reuse)
@@ -43,58 +37,44 @@ export default function AdaptCopyPage() {
     const stored = sessionStorage.getItem(`ad_${cachedAdId}`);
     if (stored) setAd(JSON.parse(stored));
 
-    // Load saved products
     api
-      .get<Product[]>("/ads/products")
-      .then((products) => setSavedProducts(products))
-      .catch(() => {});
-  }, [cachedAdId]);
-
-  async function handleDeleteProduct(id: string, name: string | null) {
-    const label = name ? `"${name}"` : "este producto";
-    if (!window.confirm(`¿Eliminar ${label}? Esta acción no se puede deshacer.`)) return;
-    try {
-      await api.delete(`/ads/products/${id}`);
-      setSavedProducts((prev) => prev.filter((p) => p.id !== id));
-      if (existingProductId === id) setExistingProductId("");
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : "No se pudo eliminar el producto.");
-    }
-  }
+      .get<{ products: Product[] }>("/products?onlyComplete=true")
+      .then(({ products }) => {
+        setProducts(products);
+        // If user has no usable products, redirect them to create one.
+        if (products.length === 0) {
+          router.replace("/products/new");
+          return;
+        }
+        // Auto-select first product for convenience.
+        setSelectedProductId(products[0].id);
+      })
+      .catch(() => setProducts([]));
+  }, [cachedAdId, router]);
 
   async function handleAdapt(e: FormEvent) {
     e.preventDefault();
     setError("");
+    if (!selectedProductId) {
+      setError("Selecciona un producto.");
+      return;
+    }
+
     setLoading(true);
     setResult(null);
 
     try {
-      const formData = new FormData();
-
-      if (mode === "existing" && existingProductId) {
-        formData.append("productId", existingProductId);
-      } else if (mode === "new") {
-        if (productImage) {
-          formData.append("productImage", productImage);
-        }
-        if (productName.trim()) {
-          formData.append("productName", productName.trim());
-        }
-      }
-
-      if (userInstructions.trim()) {
-        formData.append("userInstructions", userInstructions.trim());
-      }
-
       const res = await api.post<AdaptCopyResponse>(
         `/ads/${cachedAdId}/adapt-copy`,
-        formData,
+        {
+          productId: selectedProductId,
+          userInstructions: userInstructions.trim() || undefined,
+        },
       );
 
       setResult(res);
       setSelectedVariant(0);
 
-      // Store adaptation data for generate page
       sessionStorage.setItem(
         `adaptation_${cachedAdId}`,
         JSON.stringify(res),
@@ -108,7 +88,6 @@ export default function AdaptCopyPage() {
   }
 
   function handleContinue() {
-    // Save selected variant for generate page
     sessionStorage.setItem(
       `selectedVariant_${cachedAdId}`,
       String(selectedVariant),
@@ -129,6 +108,14 @@ export default function AdaptCopyPage() {
     );
   }
 
+  if (products === null) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl">
       <Link
@@ -143,7 +130,6 @@ export default function AdaptCopyPage() {
         Adapta el copy de &quot;{ad.headline || "este anuncio"}&quot; a tu marca.
       </p>
 
-      {/* Original copy preview */}
       <Card className="mt-6">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
           Copy original del anuncio
@@ -172,6 +158,27 @@ export default function AdaptCopyPage() {
 
       {!result && (
         <>
+          <Card className="mt-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+                Producto a pautar
+              </h3>
+              <Link
+                href="/products/new"
+                className="text-xs font-medium text-orange hover:text-orange/80"
+              >
+                + Nuevo producto
+              </Link>
+            </div>
+            <div className="mt-4">
+              <ProductPicker
+                products={products}
+                selectedId={selectedProductId}
+                onSelect={setSelectedProductId}
+              />
+            </div>
+          </Card>
+
           <Card className="mt-4">
             <div className="flex gap-3">
               <button
@@ -202,6 +209,8 @@ export default function AdaptCopyPage() {
           {source === "saved" && (
             <Card className="mt-4">
               <SavedCopiesBrowser
+                productId={selectedProductId}
+                products={products}
                 onUse={(res) => {
                   setResult(res);
                   setSelectedVariant(0);
@@ -213,131 +222,35 @@ export default function AdaptCopyPage() {
               />
             </Card>
           )}
-        </>
-      )}
 
-      {!result && source === "new" && (
-        <>
-          {/* User instructions */}
-          <Card className="mt-4">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              ¿Qué quieres adaptar?
-            </h3>
-            <p className="mt-1 text-xs text-muted">
-              Describe en tus palabras qué cambios quieres en el copy. La IA usará
-              estas instrucciones junto con la información de tu marca.
-            </p>
-            <Textarea
-              className="mt-3"
-              rows={4}
-              placeholder="Ej: Quiero que el tono sea más juvenil y directo, enfocado en el beneficio de ahorro de tiempo. Menciona que tenemos envío gratis en Colombia."
-              value={userInstructions}
-              onChange={(e) => setUserInstructions(e.target.value)}
-            />
-          </Card>
+          {source === "new" && (
+            <>
+              <Card className="mt-4">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+                  ¿Qué quieres adaptar?
+                </h3>
+                <p className="mt-1 text-xs text-muted">
+                  Describe en tus palabras qué cambios quieres en el copy. La IA usará
+                  estas instrucciones junto con la información de tu marca y producto.
+                </p>
+                <Textarea
+                  className="mt-3"
+                  rows={4}
+                  placeholder="Ej: Quiero que el tono sea más juvenil y directo, enfocado en el beneficio de ahorro de tiempo. Menciona que tenemos envío gratis en Colombia."
+                  value={userInstructions}
+                  onChange={(e) => setUserInstructions(e.target.value)}
+                />
+              </Card>
 
-          {/* Product section */}
-          <Card className="mt-4">
-            <form onSubmit={handleAdapt} className="flex flex-col gap-5">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-                Producto (opcional)
-              </h3>
-
-              {savedProducts.length > 0 && (
-                <div className="flex gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setMode("new")}
-                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-                      mode === "new"
-                        ? "border-orange text-orange"
-                        : "border-sand text-muted hover:border-orange/30"
-                    }`}
-                  >
-                    Nuevo producto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("existing")}
-                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-                      mode === "existing"
-                        ? "border-orange text-orange"
-                        : "border-sand text-muted hover:border-orange/30"
-                    }`}
-                  >
-                    Producto existente
-                  </button>
-                </div>
-              )}
-
-              {mode === "new" ? (
-                <div className="flex flex-col gap-4">
-                  <Input
-                    label="Nombre del producto"
-                    placeholder="Ej: Kit Detox 360"
-                    value={productName}
-                    onChange={(e) => setProductName(e.target.value)}
-                  />
-                  <FileUpload
-                    label="Foto del producto"
-                    value={productImage}
-                    onChange={setProductImage}
-                    helperText="La IA usará esta imagen para generar el creativo."
-                  />
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
-                  {savedProducts.map((p) => (
-                    <div
-                      key={p.id}
-                      className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
-                        existingProductId === p.id
-                          ? "border-orange ring-2 ring-orange/30"
-                          : "border-sand hover:border-orange/30"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setExistingProductId(p.id)}
-                        className="block w-full"
-                      >
-                        <img
-                          src={`${API_HOST}${p.imageUrl}`}
-                          alt={p.name || "Producto"}
-                          className="aspect-square w-full object-cover"
-                        />
-                        {p.name && (
-                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
-                            <span className="text-[10px] font-medium text-white line-clamp-1">
-                              {p.name}
-                            </span>
-                          </div>
-                        )}
-                        {existingProductId === p.id && (
-                          <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
-                            ✓
-                          </div>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteProduct(p.id, p.name)}
-                        aria-label="Eliminar producto"
-                        title="Eliminar producto"
-                        className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[12px] leading-none text-white transition-colors hover:bg-error"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <Button type="submit" loading={loading} size="lg" className="w-full">
-                Adaptar copy a mi marca
-              </Button>
-            </form>
-          </Card>
+              <Card className="mt-4">
+                <form onSubmit={handleAdapt}>
+                  <Button type="submit" loading={loading} size="lg" className="w-full">
+                    Adaptar copy a mi marca
+                  </Button>
+                </form>
+              </Card>
+            </>
+          )}
         </>
       )}
 
@@ -397,6 +310,52 @@ export default function AdaptCopyPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ProductPicker({
+  products,
+  selectedId,
+  onSelect,
+}: {
+  products: Product[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+      {products.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onSelect(p.id)}
+          className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
+            selectedId === p.id
+              ? "border-orange ring-2 ring-orange/30"
+              : "border-sand hover:border-orange/30"
+          }`}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`${API_HOST}${p.imageUrl}`}
+            alt={p.name || "Producto"}
+            className="aspect-square w-full object-cover"
+          />
+          {p.name && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+              <span className="text-[10px] font-medium text-white line-clamp-1">
+                {p.name}
+              </span>
+            </div>
+          )}
+          {selectedId === p.id && (
+            <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
+              ✓
+            </div>
+          )}
+        </button>
+      ))}
     </div>
   );
 }

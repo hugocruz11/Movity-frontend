@@ -64,6 +64,8 @@ interface AdSetInsight {
   cpc: number;
   cpm: number;
   frequency: number;
+  cpa: number | null;
+  roas: number | null;
 }
 
 interface AdInsight {
@@ -78,6 +80,8 @@ interface AdInsight {
   cpc: number;
   cpm: number;
   frequency: number;
+  cpa: number | null;
+  roas: number | null;
 }
 
 interface DashboardData {
@@ -115,6 +119,33 @@ function cpcHealth(cpc: number): "success" | "warning" | "error" {
   if (cpc <= 0.5) return "success";
   if (cpc <= 1.5) return "warning";
   return "error";
+}
+
+// ROAS = ingreso / gasto. >3 es premium, 1.5-3 sostiene el negocio,
+// <1.5 quema dinero. Cuando no hay conversiones reportadas devolvemos
+// null y la celda muestra "—" en lugar de colorear como error.
+function roasHealth(roas: number): "success" | "warning" | "error" {
+  if (roas >= 3) return "success";
+  if (roas >= 1.5) return "warning";
+  return "error";
+}
+
+// CPA bueno depende del ticket promedio del producto, pero estos
+// umbrales sirven como referencia genérica para e-commerce LATAM.
+function cpaHealth(cpa: number): "success" | "warning" | "error" {
+  if (cpa <= 20) return "success";
+  if (cpa <= 50) return "warning";
+  return "error";
+}
+
+function fmtRoas(roas: number | null): string {
+  if (roas == null) return "—";
+  return `${roas.toFixed(2)}x`;
+}
+
+function fmtCpa(cpa: number | null): string {
+  if (cpa == null) return "—";
+  return formatMoney(cpa);
 }
 
 const HEALTH_COLORS = {
@@ -471,6 +502,19 @@ export default function AnalyticsPage() {
   const { campaigns, totals } = data;
   const avgCtr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
   const avgCpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+  const overallCpa =
+    totals.conversions > 0 ? totals.spend / totals.conversions : null;
+  // ROAS global = ingreso atribuido / gasto atribuido. Ingreso por
+  // campaña = roas * spend; sólo sumamos campañas que reportaron ROAS
+  // para no diluir el promedio con campañas sin conversiones.
+  const roasContributors = campaigns.filter(
+    (c): c is typeof c & { roas: number } => c.roas != null,
+  );
+  const roasSpend = roasContributors.reduce((s, c) => s + c.spend, 0);
+  const overallRoas =
+    roasSpend > 0
+      ? roasContributors.reduce((s, c) => s + c.roas * c.spend, 0) / roasSpend
+      : null;
 
   return (
     <div className="max-w-6xl">
@@ -480,7 +524,7 @@ export default function AnalyticsPage() {
       </p>
 
       {/* Summary cards */}
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <SummaryCard label="Gasto total" value={formatMoney(totals.spend)} />
         <SummaryCard label="Impresiones" value={formatNum(totals.impressions)} />
         <SummaryCard label="Alcance" value={formatNum(totals.reach)} />
@@ -493,6 +537,16 @@ export default function AnalyticsPage() {
           label="CPC promedio"
           value={formatMoney(avgCpc)}
           health={cpcHealth(avgCpc)}
+        />
+        <SummaryCard
+          label="CPA promedio"
+          value={fmtCpa(overallCpa)}
+          health={overallCpa != null ? cpaHealth(overallCpa) : undefined}
+        />
+        <SummaryCard
+          label="ROAS global"
+          value={fmtRoas(overallRoas)}
+          health={overallRoas != null ? roasHealth(overallRoas) : undefined}
         />
       </div>
 
@@ -560,6 +614,8 @@ export default function AnalyticsPage() {
                 <th className="pb-3 pr-4 text-right">CPC</th>
                 <th className="pb-3 pr-4 text-right">CPM</th>
                 <th className="pb-3 pr-4 text-right">Freq.</th>
+                <th className="pb-3 pr-4 text-right">CPA</th>
+                <th className="pb-3 pr-4 text-right">ROAS</th>
                 <th className="pb-3 pr-4 text-right">Veredicto</th>
                 <th className="pb-3 text-right">Sugerencias</th>
               </tr>
@@ -606,6 +662,20 @@ export default function AnalyticsPage() {
                       <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(c.frequency)]}`}>
                         {c.frequency.toFixed(1)}
                       </td>
+                      <td
+                        className={`py-3 pr-4 text-right font-semibold ${
+                          c.cpa != null ? HEALTH_COLORS[cpaHealth(c.cpa)] : "text-muted"
+                        }`}
+                      >
+                        {fmtCpa(c.cpa)}
+                      </td>
+                      <td
+                        className={`py-3 pr-4 text-right font-semibold ${
+                          c.roas != null ? HEALTH_COLORS[roasHealth(c.roas)] : "text-muted"
+                        }`}
+                      >
+                        {fmtRoas(c.roas)}
+                      </td>
                       <td className="py-3 pr-4 text-right">
                         {c.impressions > 0 ? (
                           <span
@@ -631,7 +701,7 @@ export default function AnalyticsPage() {
                       <SuggestionsExpandedRow
                         entity={entity}
                         suggestions={suggestions}
-                        colSpan={10}
+                        colSpan={12}
                         actionLoading={actionLoading}
                         onStatusChange={(status) =>
                           applyStatusChange("campaign", c.campaignId, status)
@@ -681,6 +751,8 @@ export default function AnalyticsPage() {
                     <th className="pb-3 pr-4 text-right">CPC</th>
                     <th className="pb-3 pr-4 text-right">CPM</th>
                     <th className="pb-3 pr-4 text-right">Freq.</th>
+                    <th className="pb-3 pr-4 text-right">CPA</th>
+                    <th className="pb-3 pr-4 text-right">ROAS</th>
                     <th className="pb-3 text-right">Sugerencias</th>
                   </tr>
                 </thead>
@@ -728,6 +800,20 @@ export default function AnalyticsPage() {
                           <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(a.frequency)]}`}>
                             {a.frequency.toFixed(1)}
                           </td>
+                          <td
+                            className={`py-3 pr-4 text-right font-semibold ${
+                              a.cpa != null ? HEALTH_COLORS[cpaHealth(a.cpa)] : "text-muted"
+                            }`}
+                          >
+                            {fmtCpa(a.cpa)}
+                          </td>
+                          <td
+                            className={`py-3 pr-4 text-right font-semibold ${
+                              a.roas != null ? HEALTH_COLORS[roasHealth(a.roas)] : "text-muted"
+                            }`}
+                          >
+                            {fmtRoas(a.roas)}
+                          </td>
                           <td className="py-3 text-right">
                             <SuggestionsBadgeCell
                               suggestions={suggestions}
@@ -742,7 +828,7 @@ export default function AnalyticsPage() {
                           <SuggestionsExpandedRow
                             entity={entity}
                             suggestions={suggestions}
-                            colSpan={10}
+                            colSpan={12}
                             actionLoading={actionLoading}
                             onStatusChange={(status) =>
                               applyStatusChange("adset", a.adSetId, status)
@@ -793,6 +879,8 @@ export default function AnalyticsPage() {
                     <th className="pb-3 pr-4 text-right">CPC</th>
                     <th className="pb-3 pr-4 text-right">CPM</th>
                     <th className="pb-3 pr-4 text-right">Freq.</th>
+                    <th className="pb-3 pr-4 text-right">CPA</th>
+                    <th className="pb-3 pr-4 text-right">ROAS</th>
                     <th className="pb-3 text-right">Sugerencias</th>
                   </tr>
                 </thead>
@@ -834,6 +922,20 @@ export default function AnalyticsPage() {
                           <td className={`py-3 pr-4 text-right font-semibold ${HEALTH_COLORS[freqHealth(ad.frequency)]}`}>
                             {ad.frequency.toFixed(1)}
                           </td>
+                          <td
+                            className={`py-3 pr-4 text-right font-semibold ${
+                              ad.cpa != null ? HEALTH_COLORS[cpaHealth(ad.cpa)] : "text-muted"
+                            }`}
+                          >
+                            {fmtCpa(ad.cpa)}
+                          </td>
+                          <td
+                            className={`py-3 pr-4 text-right font-semibold ${
+                              ad.roas != null ? HEALTH_COLORS[roasHealth(ad.roas)] : "text-muted"
+                            }`}
+                          >
+                            {fmtRoas(ad.roas)}
+                          </td>
                           <td className="py-3 text-right">
                             <SuggestionsBadgeCell
                               suggestions={suggestions}
@@ -848,7 +950,7 @@ export default function AnalyticsPage() {
                           <SuggestionsExpandedRow
                             entity={entity}
                             suggestions={suggestions}
-                            colSpan={9}
+                            colSpan={11}
                             actionLoading={actionLoading}
                             onStatusChange={(status) =>
                               applyStatusChange("ad", ad.adId, status)
@@ -873,6 +975,8 @@ export default function AnalyticsPage() {
         <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted">
           <span>CTR: <span className="text-success">≥2% excelente</span> · <span className="text-warning">1-2% aceptable</span> · <span className="text-error">&lt;1% mejorar</span></span>
           <span>Freq: <span className="text-success">≤2 ok</span> · <span className="text-warning">2-3.5 atención</span> · <span className="text-error">&gt;3.5 fatiga</span></span>
+          <span>CPA: <span className="text-success">≤$20 bueno</span> · <span className="text-warning">$20-50 medio</span> · <span className="text-error">&gt;$50 caro</span></span>
+          <span>ROAS: <span className="text-success">≥3x premium</span> · <span className="text-warning">1.5-3x sostiene</span> · <span className="text-error">&lt;1.5x pierde</span></span>
         </div>
       )}
     </div>

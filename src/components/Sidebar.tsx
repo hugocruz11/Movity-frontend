@@ -11,6 +11,7 @@ const navItems = [
   { href: "/campaigns", label: "Campañas", icon: "📢" },
   { href: "/analytics", label: "Analytics", icon: "📊" },
   { href: "/brand", label: "Mi Marca", icon: "🏷️" },
+  { href: "/products", label: "Mis Productos", icon: "📦" },
   { href: "/meta", label: "Meta Ads", icon: "📱" },
   { href: "/meta/audiences", label: "Públicos", icon: "🎯" },
 ];

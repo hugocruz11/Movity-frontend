@@ -51,12 +51,9 @@ export default function CustomAdPage() {
   const [selectedVariant, setSelectedVariant] = useState(0);
   const [pickedSavedCopy, setPickedSavedCopy] = useState<SavedCopy | null>(null);
 
-  // Product picker
-  const [savedProducts, setSavedProducts] = useState<Product[]>([]);
-  const [productMode, setProductMode] = useState<"new" | "existing">("new");
+  // Product picker — only products with the 10 questions filled appear.
+  const [savedProducts, setSavedProducts] = useState<Product[] | null>(null);
   const [existingProductId, setExistingProductId] = useState("");
-  const [productName, setProductName] = useState("");
-  const [productImage, setProductImage] = useState<File | null>(null);
 
   // Reference image picker
   const [savedRefImages, setSavedRefImages] = useState<ReferenceImage[]>([]);
@@ -92,23 +89,22 @@ export default function CustomAdPage() {
   // Reference image URL (returned after copy generation for use in image gen)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
 
-  // Load saved products and reference images on mount
+  // Load complete products + saved reference images on mount. If the
+  // user has no usable products, send them to /products/new.
   useEffect(() => {
-    api.get<Product[]>("/ads/products").then(setSavedProducts).catch(() => {});
+    api
+      .get<{ products: Product[] }>("/products?onlyComplete=true")
+      .then(({ products }) => {
+        setSavedProducts(products);
+        if (products.length === 0) {
+          router.replace("/products/new");
+          return;
+        }
+        setExistingProductId(products[0].id);
+      })
+      .catch(() => setSavedProducts([]));
     api.get<ReferenceImage[]>("/ads/reference-images").then(setSavedRefImages).catch(() => {});
-  }, []);
-
-  async function handleDeleteProduct(id: string, name: string | null) {
-    const label = name ? `"${name}"` : "este producto";
-    if (!window.confirm(`¿Eliminar ${label}? Esta acción no se puede deshacer.`)) return;
-    try {
-      await api.delete(`/ads/products/${id}`);
-      setSavedProducts((prev) => prev.filter((p) => p.id !== id));
-      if (existingProductId === id) setExistingProductId("");
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : "No se pudo eliminar el producto.");
-    }
-  }
+  }, [router]);
 
   // ── Copy generation ──
 
@@ -120,22 +116,17 @@ export default function CustomAdPage() {
     setCopyLoading(true);
     setCopyResult(null);
 
+    if (!existingProductId) {
+      setCopyError("Selecciona un producto antes de generar el copy.");
+      setCopyLoading(false);
+      return;
+    }
+
     try {
       const formData = new FormData();
       formData.append("copyPrompt", copyPrompt.trim());
       formData.append("targetLang", targetLang);
-
-      // Product: existing or new
-      if (productMode === "existing" && existingProductId) {
-        formData.append("productId", existingProductId);
-      } else if (productMode === "new") {
-        if (productName.trim()) {
-          formData.append("productName", productName.trim());
-        }
-        if (productImage) {
-          formData.append("productImage", productImage);
-        }
-      }
+      formData.append("productId", existingProductId);
 
       // Reference image: existing or new
       if (refMode === "existing" && existingRefId) {
@@ -168,6 +159,10 @@ export default function CustomAdPage() {
 
   async function handleUseSavedCopy() {
     if (!pickedSavedCopy) return;
+    if (!existingProductId) {
+      setCopyError("Selecciona un producto antes de usar el copy guardado.");
+      return;
+    }
 
     setCopyError("");
     setCopyLoading(true);
@@ -175,13 +170,7 @@ export default function CustomAdPage() {
 
     try {
       const formData = new FormData();
-
-      if (productMode === "existing" && existingProductId) {
-        formData.append("productId", existingProductId);
-      } else if (productMode === "new") {
-        if (productName.trim()) formData.append("productName", productName.trim());
-        if (productImage) formData.append("productImage", productImage);
-      }
+      formData.append("productId", existingProductId);
 
       if (refMode === "existing" && existingRefId) {
         formData.append("referenceImageId", existingRefId);
@@ -406,99 +395,51 @@ export default function CustomAdPage() {
 
   const productPickerCard = (
     <Card>
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
-        Producto (opcional)
-      </h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+          Producto a pautar
+        </h3>
+        <Link
+          href="/products/new"
+          className="text-xs font-medium text-orange hover:text-orange/80"
+        >
+          + Nuevo producto
+        </Link>
+      </div>
 
-      {savedProducts.length > 0 && (
-        <div className="mt-3 flex gap-3">
+      <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
+        {(savedProducts ?? []).map((p) => (
           <button
+            key={p.id}
             type="button"
-            onClick={() => setProductMode("new")}
-            className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-              productMode === "new"
-                ? "border-orange text-orange"
-                : "border-sand text-muted hover:border-orange/30"
+            onClick={() => setExistingProductId(p.id)}
+            className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
+              existingProductId === p.id
+                ? "border-orange ring-2 ring-orange/30"
+                : "border-sand hover:border-orange/30"
             }`}
           >
-            Nuevo producto
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`${API_HOST}${p.imageUrl}`}
+              alt={p.name || "Producto"}
+              className="aspect-square w-full object-cover"
+            />
+            {p.name && (
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+                <span className="text-[10px] font-medium text-white line-clamp-1">
+                  {p.name}
+                </span>
+              </div>
+            )}
+            {existingProductId === p.id && (
+              <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
+                ✓
+              </div>
+            )}
           </button>
-          <button
-            type="button"
-            onClick={() => setProductMode("existing")}
-            className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
-              productMode === "existing"
-                ? "border-orange text-orange"
-                : "border-sand text-muted hover:border-orange/30"
-            }`}
-          >
-            Producto existente
-          </button>
-        </div>
-      )}
-
-      {productMode === "new" ? (
-        <div className="mt-3 flex flex-col gap-4">
-          <Input
-            label="Nombre del producto"
-            placeholder="Ej: Kit Skincare Natural"
-            value={productName}
-            onChange={(e) => setProductName(e.target.value)}
-          />
-          <FileUpload
-            label="Foto del producto"
-            value={productImage}
-            onChange={setProductImage}
-            helperText="La IA usará esta imagen para generar el creativo."
-          />
-        </div>
-      ) : (
-        <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
-          {savedProducts.map((p) => (
-            <div
-              key={p.id}
-              className={`relative overflow-hidden rounded-lg border-2 transition-colors ${
-                existingProductId === p.id
-                  ? "border-orange ring-2 ring-orange/30"
-                  : "border-sand hover:border-orange/30"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setExistingProductId(p.id)}
-                className="block w-full"
-              >
-                <img
-                  src={`${API_HOST}${p.imageUrl}`}
-                  alt={p.name || "Producto"}
-                  className="aspect-square w-full object-cover"
-                />
-                {p.name && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
-                    <span className="text-[10px] font-medium text-white line-clamp-1">
-                      {p.name}
-                    </span>
-                  </div>
-                )}
-                {existingProductId === p.id && (
-                  <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-orange text-[10px] text-white">
-                    ✓
-                  </div>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeleteProduct(p.id, p.name)}
-                aria-label="Eliminar producto"
-                title="Eliminar producto"
-                className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[12px] leading-none text-white transition-colors hover:bg-error"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+        ))}
+      </div>
     </Card>
   );
 
@@ -609,6 +550,14 @@ export default function CustomAdPage() {
     setStep(target);
   }
 
+  if (savedProducts === null) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl">
       <button
@@ -692,6 +641,8 @@ export default function CustomAdPage() {
                 </p>
                 <div className="mt-3">
                   <SavedCopiesBrowser
+                    productId={existingProductId}
+                    products={savedProducts ?? []}
                     onPick={setPickedSavedCopy}
                     pickedId={pickedSavedCopy?.id ?? null}
                   />

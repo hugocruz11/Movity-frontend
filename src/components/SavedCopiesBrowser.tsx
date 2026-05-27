@@ -3,25 +3,42 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { Spinner } from "@/components/ui/Spinner";
-import type { AdaptCopyResponse, SavedCopy } from "@/lib/types";
+import type { AdaptCopyResponse, Product, SavedCopy } from "@/lib/types";
 
 interface Props {
   /**
+   * Required: the product to associate with the saved copy when the
+   * user picks it. Products are managed centrally; the parent must
+   * have collected the selection before mounting this browser.
+   */
+  productId: string;
+  /**
+   * Full list of selectable products. Used only to surface the active
+   * product name on the warning banner; kept optional so existing
+   * callers don't have to thread it through.
+   */
+  products?: Product[];
+  /**
    * Direct-use mode: called after the backend materializes the saved copy
-   * into an adaptation. Used when the flow doesn't need extra inputs
-   * (e.g. the adapt-from-winning-ad flow).
+   * into an adaptation.
    */
   onUse?: (result: AdaptCopyResponse) => void;
   /**
    * Pick mode: called with the raw saved copy so the parent can collect
-   * additional inputs (product image, reference image) before calling
-   * /use itself. If provided, overrides onUse.
+   * additional inputs (reference image) before calling /use itself.
+   * If provided, overrides onUse.
    */
   onPick?: (saved: SavedCopy) => void;
   pickedId?: string | null;
 }
 
-export function SavedCopiesBrowser({ onUse, onPick, pickedId }: Props) {
+export function SavedCopiesBrowser({
+  productId,
+  products,
+  onUse,
+  onPick,
+  pickedId,
+}: Props) {
   const [items, setItems] = useState<SavedCopy[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [usingId, setUsingId] = useState<string | null>(null);
@@ -41,12 +58,16 @@ export function SavedCopiesBrowser({ onUse, onPick, pickedId }: Props) {
       return;
     }
     if (!onUse) return;
+    if (!productId) {
+      setError("Selecciona un producto antes de usar el copy.");
+      return;
+    }
     setUsingId(saved.id);
     setError("");
     try {
       const res = await api.post<AdaptCopyResponse>(
         `/ads/saved-copies/${saved.id}/use`,
-        new FormData(),
+        { productId },
       );
       onUse(res);
     } catch (err) {
@@ -56,6 +77,8 @@ export function SavedCopiesBrowser({ onUse, onPick, pickedId }: Props) {
       setUsingId(null);
     }
   }
+
+  const activeProduct = products?.find((p) => p.id === productId);
 
   async function handleDelete(id: string) {
     if (!confirm("¿Eliminar este copy guardado?")) return;
@@ -85,6 +108,12 @@ export function SavedCopiesBrowser({ onUse, onPick, pickedId }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
+      {activeProduct && (
+        <p className="text-xs text-muted">
+          Se usará con el producto:{" "}
+          <span className="font-semibold text-ink">{activeProduct.name ?? "(sin nombre)"}</span>
+        </p>
+      )}
       {error && <p className="text-xs text-error">{error}</p>}
       {items.map((s) => {
         const isPicked = pickedId === s.id;

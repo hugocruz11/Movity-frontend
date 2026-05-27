@@ -41,19 +41,30 @@ class ApiClient {
       headers,
     });
 
-    if (res.status === 401) {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("oneclickia_token");
-        window.location.href = "/login";
-      }
-      throw new ApiError(401, "No autorizado");
-    }
-
     if (!res.ok) {
       const error = await res
         .json()
         .catch(() => ({ message: "Error en la solicitud" }));
-      throw new ApiError(res.status, error.message || "Error en la solicitud");
+      const rawMessage = error.message ?? "Error en la solicitud";
+      // NestJS ValidationPipe returns message as string[] — flatten it.
+      const message = Array.isArray(rawMessage)
+        ? rawMessage.join(". ")
+        : String(rawMessage);
+
+      // 401 on a non-auth endpoint = session expired. Clear the token
+      // and bounce to /login so the user can re-authenticate. For auth
+      // endpoints (login/register) we let the error bubble up so the
+      // form can show the backend's message in place.
+      if (
+        res.status === 401 &&
+        !path.startsWith("/auth/") &&
+        typeof window !== "undefined"
+      ) {
+        localStorage.removeItem("oneclickia_token");
+        window.location.href = "/login";
+      }
+
+      throw new ApiError(res.status, message);
     }
 
     // Handle 204 No Content
@@ -78,7 +89,7 @@ class ApiClient {
   patch<T>(path: string, body: unknown) {
     return this.request<T>(path, {
       method: "PATCH",
-      body: JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body),
     });
   }
 

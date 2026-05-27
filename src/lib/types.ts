@@ -12,6 +12,13 @@ export interface AuthResponse {
 
 // ── Brand ──
 
+export type PricePositioning =
+  | "VALUE"
+  | "MID_MARKET"
+  | "PREMIUM_ACCESSIBLE"
+  | "PREMIUM"
+  | "ULTRA_PREMIUM";
+
 export interface Brand {
   id: string;
   userId: string;
@@ -23,6 +30,23 @@ export interface Brand {
   logoUrl: string | null;
   logoAnalysis: string | null;
   primaryColors: string[];
+  // ── LA MARCA — Brand Intelligence Survey ──
+  identityContext: string | null;
+  markets: string | null;
+  mission: string | null;
+  brandPersona: string | null;
+  toneOfVoice: string | null;
+  communicationProhibitions: string | null;
+  admiredBrands: string | null;
+  coreBelief: string | null;
+  visualIdentity: string | null;
+  pricePositioning: PricePositioning | null;
+  positioningStatement: string | null;
+  competitors: string | null;
+  competitiveEdge: string | null;
+  marketGap: string | null;
+  // ── Onboarding tracking ──
+  onboardingCompleted: boolean;
   sources: Record<string, string>;
   createdAt: string;
   updatedAt: string;
@@ -149,9 +173,24 @@ export interface CopyVariant {
 
 export interface Product {
   id: string;
+  brandId: string;
   name: string | null;
   imageUrl: string;
-  brandId: string;
+  // ── 10 EL PRODUCTO survey fields ──
+  description: string | null;
+  composition: string | null;
+  notProduct: string | null;
+  featuresBenefits: string | null;
+  usp: string | null;
+  mechanism: string | null;
+  usageRitual: string | null;
+  priceJustification: string | null;
+  customerAvatar: string | null;
+  customerVoice: string | null;
+  // Gate flag — only products with `isComplete: true` appear in pickers.
+  isComplete: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdaptCopyResponse {

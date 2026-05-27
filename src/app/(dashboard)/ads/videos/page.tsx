@@ -109,8 +109,8 @@ export default function VideosSearchPage() {
       <h1 className="text-2xl font-semibold text-ink">Buscar Videos</h1>
       <p className="mt-1 text-sm text-muted">
         Encuentra anuncios en video de la competencia y úsalos como plantilla
-        para tu marca. La IA extrae la estructura del video (hook, escenas,
-        CTA) para que puedas replicarla.
+        para tu marca. La IA extrae la estructura del script y la convierte en
+        un template universal con variables para que puedas reusarlo.
       </p>
 
       <Card className="mt-6">
